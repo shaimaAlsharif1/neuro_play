@@ -39,7 +39,7 @@ except Exception:
 def make_env(game: str, state: str | None):
     """Create retro env; prefer rgb_array where available (we draw the window ourselves)."""
     try:
-        env = retro.make(game=game, state=state, render_mode="rgb_array")
+        env = retro.make(game=game, state=state, render_mode="human")
     except TypeError:
         env = retro.make(game=game, state=state)
     return env
