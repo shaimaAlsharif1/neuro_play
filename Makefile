@@ -1,3 +1,7 @@
+
+install_requirements:
+	@pip install -r requirements.txt
+
 run_sonic:
 	python SonicTheHedgehog2/main_sonic.py --game SonicTheHedgehog2-Genesis --state EmeraldHillZone.Act1  --episode 34 --sonic-helper
 
