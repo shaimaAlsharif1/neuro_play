@@ -1,0 +1,41 @@
+
+ 1223  cd code/gym-project-test
+ 1224  pyenv virtualenv rl-retro 3.10.6
+ 1225  pyenv virtualenv 3.10.6 rl-retro
+ 1226  pyenv local rl-retro
+ 1227  pip install stable-retro
+ 1228  touch main.py
+ 1229  nano main.py
+ 1230  python main.py
+ 1231  code .
+ 1232  python main.py --game SonicTheHedgehog-Genesis
+ 1233  python -m retro.import Sonic\ The\ Hedgehog\ \(USA,\ Europe\)/sonichd.md
+ 1234  python main.py --game SonicTheHedgehog-Genesis
+ 1235  python -m retro.import Sonic\ The\ Hedgehog\ \(USA,\ Europe\)
+ 1236  python -m retro.list
+ 1237  python -m retro.import Sonic\ The\ Hedgehog\ 2\ \(World\)\ \(Rev\ A\)
+ 1238  python main.py --game SonicTheHedgehog2-Genesis
+ 1239  sudo apt-get install python-opengl
+ 1240  sudo apt-get install python3-opengl
+ 1241  python main.py --game SonicTheHedgehog2-Genesis
+ 1242  python main.py --game SonicTheHedgehog2-Genesis --episode 25 --record-dir videos
+ 1243  tree
+ 1244  python main.py --game SonicTheHedgehog2-Genesis --episode 25 --record-dir ./videos
+ 1245  pip install pygame imageio imageio-ffmpeg
+ 1246  python main.py --game SonicTheHedgehog2-Genesis --episode 25 --record-dir ./videos
+ 1247  pip install pyav
+ 1248  pip install imageio[pyav]`
+ 1249  pip install imageio[pyav]
+ 1250  pip install pip --upgrade
+ 1251  pip install pyav
+ 1252  sudo apt-get update\nsudo apt-get install ffmpeg libavformat-dev libavcodec-dev libavdevice-dev \\n                     libavutil-dev libswscale-dev libswresample-dev libavfilter-dev
+ 1253  pip install av
+ 1254  python main.py --game SonicTheHedgehog2-Genesis --episode 25
+ 1255  python main.py --game SonicTheHedgehog-Genesis --state GreenHillZone.Act1 --sonic-helper --scale 3
+ 1256  python main.py --game SonicTheHedgehog2 --state GreenHillZone.Act1 --sonic-helper --scale 3
+ 1257  python main.py --game SonicTheHedgehog2-Genesis --state GreenHillZone.Act1 --sonic-helper --scale 3
+ 1258  python main.py --game SonicTheHedgehog2-Genesis  --sonic-helper --scale 3
+ 1259  python main.py --game SonicTheHedgehog2-Genesis  --sonic-helper --scale 3 --record-dir videos
+ 1260  python main.py --game SonicTheHedgehog2-Genesis --episode 34 --sonic-helper --scale 3 --record-dir videos
+ 1261  pip install pygame imageio imageio-ffmpeg
+ 1262  python main.py --game SonicTheHedgehog2-Genesis --episode 34 --sonic-helper --scale 3 --record-dir videos
