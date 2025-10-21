@@ -123,11 +123,9 @@ class DQNAgent:
             self.target.load_state_dict(self.q.state_dict())
         return float(loss.item())
 
-
 def make_env(render: bool):
-    # LunarLander-v2 is discrete actions (4). Use render_mode="human" to see it.
     render_mode = "human" if render else None
-    env = gym.make("LunarLander-v2", render_mode=render_mode)
+    env = gym.make("LunarLander-v3", render_mode=render_mode)
     return env
 
 
