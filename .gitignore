@@ -7,3 +7,5 @@ SonicTheHedgehog2/videos
 notebooks/
 
 *.ipynb
+
+LunarLander-project-main/__pycache__/
