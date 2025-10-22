@@ -25,10 +25,10 @@ import torch.nn as nn
 import torch.optim as optim
 import gymnasium as gym
 
-Transition = namedtuple("Transition", ("state", "action", "reward", "next_state", "done"))
+Transition = namedtuple("Transition", ("state", "action", "reward", "next_state", "done")) # moved to agent.py, to be deleted from main
 
 # stores past experiences: state, action, reward, next_state, done
-class ReplayBuffer:
+class ReplayBuffer: # moved to agent.py, to be deleted from main
     def __init__(self, capacity: int):
         self.buffer = deque(maxlen=capacity)
 
@@ -74,7 +74,7 @@ class DQNConfig:
     max_grad_norm: float = 10.0
 
 # the DQN agent
-class DQNAgent:
+class DQNAgent: # moved to agent.py, to be deleted from main
     def __init__(self, obs_dim: int, act_dim: int, device: str, cfg: DQNConfig):
         self.device = device
         self.cfg = cfg
