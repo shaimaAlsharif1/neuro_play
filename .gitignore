@@ -3,3 +3,7 @@ raw_data/
 SonicTheHedgehog2/videos
 
 *.mp4
+
+notebooks/
+
+*.ipynb
