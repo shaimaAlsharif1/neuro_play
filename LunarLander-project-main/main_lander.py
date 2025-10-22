@@ -18,6 +18,7 @@ import random
 from collections import deque, namedtuple
 from dataclasses import dataclass
 
+# import and setup
 import numpy as np
 import torch
 import torch.nn as nn
@@ -26,7 +27,7 @@ import gymnasium as gym
 
 Transition = namedtuple("Transition", ("state", "action", "reward", "next_state", "done"))
 
-
+# stores past experiences: state, action, reward, next_state, done
 class ReplayBuffer:
     def __init__(self, capacity: int):
         self.buffer = deque(maxlen=capacity)
@@ -42,6 +43,8 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
+#Neural network Qnet, that approximate the Q function,
+# input : state, output : Q values
 class QNet(nn.Module):
     def __init__(self, obs_dim: int, act_dim: int):
         super().__init__()
@@ -55,21 +58,22 @@ class QNet(nn.Module):
         return self.net(x)
 
 
+# stores all the hyperparameters,
 @dataclass
 class DQNConfig:
-    gamma: float = 0.99
-    lr: float = 1e-3
+    gamma: float = 0.99 #discount factor
+    lr: float = 1e-3 #learning rate
     batch_size: int = 128
     buffer_size: int = 100_000
-    start_epsilon: float = 1.0
+    start_epsilon: float = 1.0 # explorationi rate
     end_epsilon: float = 0.05
-    eps_decay_steps: int = 30_000
+    eps_decay_steps: int = 30_000 # how queckly epsilon decreases
     target_update_every: int = 1_000
-    train_after: int = 5_000
+    train_after: int = 5_000  #start training after this steps
     train_every: int = 4
     max_grad_norm: float = 10.0
 
-
+# the DQN agent
 class DQNAgent:
     def __init__(self, obs_dim: int, act_dim: int, device: str, cfg: DQNConfig):
         self.device = device
@@ -81,13 +85,13 @@ class DQNAgent:
         self.replay = ReplayBuffer(cfg.buffer_size)
         self.steps = 0
         self.act_dim = act_dim
-
+    #epsilon policy
     def epsilon(self):
         # Linear decay
         eps = self.cfg.end_epsilon + (self.cfg.start_epsilon - self.cfg.end_epsilon) * \
               max(0.0, (self.cfg.eps_decay_steps - self.steps) / self.cfg.eps_decay_steps)
         return eps
-
+    # chossing the action
     def act(self, state: np.ndarray) -> int:
         self.steps += 1
         if random.random() < self.epsilon():
@@ -99,7 +103,7 @@ class DQNAgent:
 
     def push(self, *args):
         self.replay.push(*args)
-
+    # training steps, sample a batch , compute the Q using the network, compute target, compute loss,
     def train_step(self):
         if len(self.replay) < self.cfg.train_after or self.steps % self.cfg.train_every != 0:
             return None
@@ -123,12 +127,15 @@ class DQNAgent:
             self.target.load_state_dict(self.q.state_dict())
         return float(loss.item())
 
+
+
+#the environment set up
 def make_env(render: bool):
     render_mode = "human" if render else None
     env = gym.make("LunarLander-v3", render_mode=render_mode)
     return env
 
-
+# runs the game randomly, no training and learning
 def random_rollout(episodes: int = 5, render: bool = False):
     env = make_env(render)
     try:
@@ -145,6 +152,13 @@ def random_rollout(episodes: int = 5, render: bool = False):
     finally:
         env.close()
 
+# training DQN,
+# in each loop:
+# select the action
+# executes the environment,
+# stores transitions in replay buffer
+# perform training step
+# resets the environment at the end of the ep
 
 def train_dqn(train_steps: int = 50_000, eval_episodes: int = 5, render_eval: bool = False, seed: int = 1):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
@@ -191,7 +205,7 @@ def train_dqn(train_steps: int = 50_000, eval_episodes: int = 5, render_eval: bo
     finally:
         eval_env.close()
 
-
+# for command line arguments
 def parse_args():
     p = argparse.ArgumentParser(description="LunarLander-v2 random or DQN training")
     p.add_argument("--random", action="store_true", help="Run random agent for a few episodes")
@@ -203,7 +217,7 @@ def parse_args():
     p.add_argument("--seed", type=int, default=1, help="Random seed")
     return p.parse_args()
 
-
+# the main function
 def main():
     args = parse_args()
     if args.random:
