@@ -25,41 +25,22 @@ def evaluate(agent,
     """
     device = next(agent.q.parameters()).device
 
-    # (A) live window
-    if render_window:
-        env = make_env_human()
-        try:
-            for ep in range(1, eval_episodes + 1):
-                s, _ = env.reset(seed=seed + ep)
-                done = tr = False
-                total = 0.0
-                while not (done or tr):
-                    with torch.no_grad():
-                        q = agent.q(torch.tensor(s, dtype=torch.float32, device=device))
-                        a = int(q.argmax(dim=1).item())
-                    s, r, done, tr, _ = env.step(a)
-                    total += r
-                print(f"[eval-human] episode {ep}/{eval_episodes} return={total:.2f}")
-        finally:
-            env.close()
 
-    # (B) MP4 video
-    if save_video:
-        os.makedirs("videos", exist_ok=True)
-        env_v = RecordVideo(make_env_rgb(), video_folder="videos", name_prefix="lander_eval",         episode_trigger=lambda ep_idx: True,  # record every episode you run
-        video_length=0                        # 0 = no limit (record until episode ends)
-    )
-        try:
-            s, _ = env_v.reset(seed=seed + 999)
+    env = make_env_human()
+    try:
+        for ep in range(1, eval_episodes + 1):
+            s, _ = env.reset(seed=seed + ep)
             done = tr = False
+            total = 0.0
             while not (done or tr):
                 with torch.no_grad():
                     q = agent.q(torch.tensor(s, dtype=torch.float32, device=device))
                     a = int(q.argmax(dim=1).item())
-                s, _, done, tr, _ = env_v.step(a)
-            print("Saved MP4(s) to ./videos")
-        finally:
-            env_v.close()
+                s, r, done, tr, _ = env.step(a)
+                total += r
+            print(f"[eval-human] episode {ep}/{eval_episodes} return={total:.2f}")
+    finally:
+        env.close()
 
 
 def train_dqn(train_steps: int = 50_000,
@@ -73,7 +54,7 @@ def train_dqn(train_steps: int = 50_000,
     torch.manual_seed(seed)
 
     # Headless training env
-    env = make_env(render=True)
+    env = make_env(render=False)
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -98,9 +79,7 @@ def train_dqn(train_steps: int = 50_000,
             ep_ret = 0.0
             s, _ = env.reset()
 
-
     env.close()
-    torch.save(agent.q.state_dict(), "dqn_lunarlander.pth")
 
     # Evaluate at the end
     evaluate(agent,
