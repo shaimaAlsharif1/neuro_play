@@ -16,8 +16,8 @@ class DQNAgent:
     def __init__(self, obs_dim: int, act_dim: int, device: str, cfg: DQNConfig):
         self.device = device
         self.cfg = cfg
-        self.q = QNet(obs_dim, act_dim).to(device)
-        self.target = QNet(obs_dim, act_dim).to(device)
+        self.q = QNetwork(obs_dim, act_dim).to(device)
+        self.target = QNetwork(obs_dim, act_dim).to(device)
         self.target.load_state_dict(self.q.state_dict())
         self.optim = optim.Adam(self.q.parameters(), lr=cfg.lr)
         self.replay = ReplayBuffer(cfg.buffer_size)
