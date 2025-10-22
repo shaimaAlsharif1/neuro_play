@@ -17,7 +17,7 @@ import os
 
 
 
-def train_dqn(train_steps: int = 50_000, eval_episodes: int = 5, render_eval: bool = False, seed: int = 1):
+def train_dqn(train_steps: int = 1000, eval_episodes: int = 5, render_eval: bool = True, seed: int = 1):
 
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
      #setting seeds to ensures that results are reproducible
@@ -60,18 +60,13 @@ def train_dqn(train_steps: int = 50_000, eval_episodes: int = 5, render_eval: bo
             s, _ = env.reset()
     env.close()
 
-    torch.save(agent.q_net.state_dict(), "dqn_lunarlander.pth")
+    torch.save(agent.q.state_dict(), "dqn_lunarlander.pth")
     # save the file
 
     # Evaluate
     print("\nEvaluating...")
     #create a new env for evaluation
-    #eval_env = make_env(render_eval)
-    video_folder = "videos"  # folder to save video
-    os.makedirs(video_folder, exist_ok=True)
-
     eval_env = make_env(render_eval)
-    eval_env = RecordVideo(eval_env, video_folder=video_folder, episode_trigger=lambda e: True)
     try:
         returns = []
         #loops over the episodes
@@ -84,10 +79,11 @@ def train_dqn(train_steps: int = 50_000, eval_episodes: int = 5, render_eval: bo
                     q = agent.q(torch.tensor(s, dtype=torch.float32, device=device).unsqueeze(0))
                     a = int(torch.argmax(q, dim=1).item())
                 s, r, done, tr, _ = eval_env.step(a)
+                if render_eval:
+                    eval_env.render(mode="human")
                 total += r
             returns.append(total)
             print(f"[Eval] Episode {ep}/{eval_episodes} | Return: {total:.2f}")
         print(f"Avg return: {np.mean(returns):.2f} ± {np.std(returns):.2f}")
-        print(f"Videos saved to {video_folder}")
     finally:
         eval_env.close()
