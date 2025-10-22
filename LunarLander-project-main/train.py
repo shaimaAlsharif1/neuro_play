@@ -45,10 +45,16 @@ def evaluate(agent,
 
     # (B) MP4 video
     if save_video:
+                # MP4 video block inside evaluate()
         os.makedirs("videos", exist_ok=True)
-        env_v = RecordVideo(make_env_rgb(), video_folder="videos", name_prefix="lander_eval",         episode_trigger=lambda ep_idx: True,  # record every episode you run
-        video_length=0                        # 0 = no limit (record until episode ends)
-    )
+        env_v = RecordVideo(
+            make_env_rgb(),
+            video_folder="videos",
+            name_prefix="lander_eval",
+            episode_trigger=lambda ep_idx: True,  # record every eval run
+            video_length=0                        # 0 = full episode
+        )
+
         try:
             s, _ = env_v.reset(seed=seed + 999)
             done = tr = False
@@ -73,7 +79,7 @@ def train_dqn(train_steps: int = 50_000,
     torch.manual_seed(seed)
 
     # Headless training env
-    env = make_env(render=True)
+    env = make_env(render=False)
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
     device = "cuda" if torch.cuda.is_available() else "cpu"

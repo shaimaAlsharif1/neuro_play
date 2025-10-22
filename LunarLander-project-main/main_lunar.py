@@ -12,7 +12,6 @@ def parse_args():
     p.add_argument("--eval_episodes", type=int, default=5, help="Evaluation episodes after training")
     p.add_argument("--save_video", action="store_true", help="Record MP4(s) to ./videos during eval")
     p.add_argument("--seed", type=int, default=1, help="Random seed")
-    p.add_argument("--render_window", action="store_true", help="Viz")
     return p.parse_args()
 
 def main():
