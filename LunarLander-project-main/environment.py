@@ -1,5 +1,5 @@
-from config import DQNConfig
 
+import gymnasium as gym
 
 def make_env(render: bool):
     render_mode = "human" if render else None
