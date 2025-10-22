@@ -1,13 +1,12 @@
+from __future__ import annotations
 from config import DQNConfig
 from network import QNetwork
-from __future__ import annotations
 import random
 from collections import deque, namedtuple
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from collections import deque, namedtuple
 
 Transition = namedtuple("Transition", ("state", "action", "reward", "next_state", "done"))
 
