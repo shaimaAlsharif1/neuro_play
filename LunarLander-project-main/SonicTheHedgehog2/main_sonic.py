@@ -44,7 +44,6 @@ def make_env(game: str, state: str | None):
         env = retro.make(game=game, state=state)
     return env
 
-
 def get_buttons(env):
     try:
         return list(getattr(env, "buttons", []))
@@ -211,6 +210,10 @@ def run_episode(env, policy_fn, max_steps: int, viewer: PygameViewer | None,
         steps += 1
 
     return steps
+
+
+
+
 
 
 def main():
