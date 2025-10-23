@@ -50,7 +50,7 @@ def evaluate(agent,
         os.makedirs("LunarLander-project-main/videos", exist_ok=True)
         env_v = RecordVideo(
             make_env_rgb(),
-            video_folder="videos",
+            video_folder="videos/eval_video",
             name_prefix="lander_eval",
             episode_trigger=lambda ep_idx: True,  # record every eval run
             video_length=0                        # 0 = full episode
@@ -85,11 +85,11 @@ def train_dqn(train_steps: int = 50_000,
 
     # Create env with rgb_array mode if saving video
     if save_video:
-        os.makedirs("videos", exist_ok=True)
+        os.makedirs("videos/train_video", exist_ok=True)
         env = make_env_rgb()  # rgb_array for RecordVideo
         env = RecordVideo(
             env,
-            video_folder="videos",
+            video_folder="videos/train_video",
             name_prefix="lander_train",
             episode_trigger=lambda ep_idx: True,  # record every episode
             video_length=0                        # full episode
