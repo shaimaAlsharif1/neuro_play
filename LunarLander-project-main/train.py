@@ -46,7 +46,7 @@ def evaluate(agent,
     # (B) MP4 video
     if save_video:
                 # MP4 video block inside evaluate()
-        os.makedirs("videos", exist_ok=True)
+        os.makedirs("/LunarLander-project-main/videos", exist_ok=True)
         env_v = RecordVideo(
             make_env_rgb(),
             video_folder="videos",
@@ -73,7 +73,7 @@ def train_dqn(train_steps: int = 50_000,
               render_eval: bool = False,
               save_video: bool = False,
               seed: int = 1,
-              model_path: str = "dqn_lunarlander.pth"):
+              model_path: str = "/LunarLander-project-main/dqn_lunarlander.pth"):
     # Reproducibility
     random.seed(seed)
     np.random.seed(seed)
