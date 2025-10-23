@@ -72,7 +72,8 @@ def train_dqn(train_steps: int = 50_000,
               eval_episodes: int = 5,
               render_eval: bool = False,
               save_video: bool = False,
-              seed: int = 1):
+              seed: int = 1,
+              model_path: str = "dqn_lunarlander.pth"):
     # Reproducibility
     random.seed(seed)
     np.random.seed(seed)
@@ -86,6 +87,14 @@ def train_dqn(train_steps: int = 50_000,
 
     cfg = DQNConfig()
     agent = DQNAgent(obs_dim, act_dim, device, cfg)
+
+     # Load existing model if found
+    if os.path.exists(model_path):
+        print(f"Found existing model at '{model_path}', loading for retraining...")
+        agent.load(model_path)
+
+    else:
+        print("Training from scratch...")
 
     s, _ = env.reset(seed=seed)
     ep_ret = 0.0
@@ -106,7 +115,7 @@ def train_dqn(train_steps: int = 50_000,
 
 
     env.close()
-    torch.save(agent.q.state_dict(), "dqn_lunarlander.pth")
+    agent.save(model_path)
 
     # Evaluate at the end
     evaluate(agent,

@@ -90,3 +90,12 @@ class DQNAgent:
             self.target.load_state_dict(self.q.state_dict())
 
         return float(loss.item())
+
+    def save(self, path: str):
+        torch.save(self.q.state_dict(), path)
+        print(f"Model saved at {path}")
+
+    def load(self, path: str):
+        self.q.load_state_dict(torch.load(path, map_location=self.device))
+        self.target.load_state_dict(self.q.state_dict())
+        print(f"Loaded model from {path}")
