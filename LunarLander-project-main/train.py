@@ -11,6 +11,7 @@ from gymnasium.wrappers import RecordVideo
 from agent import DQNAgent
 from config import DQNConfig
 from environment import make_env, make_env_human, make_env_rgb
+import numpy as np
 
 
 def evaluate(agent,
@@ -46,7 +47,7 @@ def evaluate(agent,
     # (B) MP4 video
     if save_video:
                 # MP4 video block inside evaluate()
-        os.makedirs("/LunarLander-project-main/videos", exist_ok=True)
+        os.makedirs("LunarLander-project-main/videos", exist_ok=True)
         env_v = RecordVideo(
             make_env_rgb(),
             video_folder="videos",
@@ -73,7 +74,7 @@ def train_dqn(train_steps: int = 50_000,
               render_eval: bool = False,
               save_video: bool = False,
               seed: int = 1,
-              model_path: str = "/LunarLander-project-main/dqn_lunarlander.pth"):
+              model_path: str = "LunarLander-project-main/dqn_lunarlander.pth"):
     # Reproducibility
     random.seed(seed)
     np.random.seed(seed)
@@ -81,6 +82,22 @@ def train_dqn(train_steps: int = 50_000,
 
     # Headless training env
     env = make_env(render=False)
+
+    # Create env with rgb_array mode if saving video
+    if save_video:
+        os.makedirs("videos", exist_ok=True)
+        env = make_env_rgb()  # rgb_array for RecordVideo
+        env = RecordVideo(
+            env,
+            video_folder="videos",
+            name_prefix="lander_train",
+            episode_trigger=lambda ep_idx: True,  # record every episode
+            video_length=0                        # full episode
+        )
+        print("\033[92m🎥 Training video recording enabled\033[0m")
+    else:
+        env = make_env(render=False)  # normal headless env
+
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -90,14 +107,16 @@ def train_dqn(train_steps: int = 50_000,
 
      # Load existing model if found
     if os.path.exists(model_path):
-        print(f"Found existing model at '{model_path}', loading for retraining...")
+        print("\033[93m Loading existing model...\033[0m")
         agent.load(model_path)
 
     else:
-        print("Training from scratch...")
+        print("\033[93m Training from scratch... \033[0m")
 
     s, _ = env.reset(seed=seed)
     ep_ret = 0.0
+    # training loop
+    episode_rewards = []
 
     for t in range(1, train_steps + 1):
         a = agent.act(s)
@@ -110,6 +129,7 @@ def train_dqn(train_steps: int = 50_000,
 
         if done or tr:
             print(f"[train] step={t:6d} eps={agent.epsilon():.3f} return={ep_ret:7.2f} replay={len(agent.replay)}")
+            episode_rewards.append(ep_ret)
             ep_ret = 0.0
             s, _ = env.reset()
 
@@ -123,3 +143,20 @@ def train_dqn(train_steps: int = 50_000,
              render_window=render_eval,
              save_video=save_video,
              seed=seed)
+
+    total_episodes = len(episode_rewards)
+    total_steps = train_steps
+    max_reward = np.max(episode_rewards) if episode_rewards else 0
+    min_reward = np.min(episode_rewards) if episode_rewards else 0
+
+
+    print("\n" + "="*40)
+    print("🎯 Training Summary")
+    print("="*40)
+    print(f"Total steps        : {total_steps}")
+    print(f"Total episodes     : {total_episodes}")
+    print(f"Max reward         : {max_reward:.2f}")
+    print(f"Min reward         : {min_reward:.2f}")
+    print(f"Final epsilon      : {agent.epsilon():.3f}")
+    print(f"Replay buffer size : {len(agent.replay)}")
+    print("="*40 + "\n")
