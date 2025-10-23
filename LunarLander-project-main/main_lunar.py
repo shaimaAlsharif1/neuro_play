@@ -17,7 +17,8 @@ def parse_args():
 def main():
     args = parse_args()
     if args.random:
-        random_rollout(episodes=args.episodes, render=args.render, seed=args.seed)
+        random_rollout(episodes=args.episodes, render=args.render, seed=args.seed, save_video=args.save_video)
+
     elif args.train:
         train_dqn(train_steps=args.train_steps,
                   eval_episodes=args.eval_episodes,
