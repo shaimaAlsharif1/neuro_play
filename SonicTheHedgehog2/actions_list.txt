@@ -1,0 +1,20 @@
+# Buttons (Retro order)
+0: B
+1: A
+2: MODE
+3: START
+4: UP
+5: DOWN
+6: LEFT
+7: RIGHT
+8: C
+9: Y
+10: X
+11: Z
+
+# Suggested discrete actions (name -> multi-binary):
+NOOP: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+RIGHT: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
+RIGHT+B: [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
+B: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+LEFT: [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
