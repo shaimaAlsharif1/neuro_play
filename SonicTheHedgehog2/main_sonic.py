@@ -12,6 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 import numpy as np
+from environment_soinc import SonicEnv
 
 # --- retro (stable-retro / gym-retro) ---
 try:
@@ -36,12 +37,19 @@ except Exception:
 
 
 # ---------- helpers ----------
-def make_env(game: str, state: str | None):
-    """Create retro env; prefer rgb_array where available (we draw the window ourselves)."""
-    try:
-        env = retro.make(game=game, state=state, render_mode="human")
-    except TypeError:
-        env = retro.make(game=game, state=state)
+def make_env(game_id="SonicTheHedgehog2-Genesis",
+             state_id="EmeraldHillZone.Act1",
+             mask_dir="mask",
+             render=False):
+    """
+    Factory function to create and return a SonicEnv instance.
+    """
+    env = SonicEnv(
+        game_id=game_id,
+        state_id=state_id,
+        mask_dir=mask_dir,
+        render=render
+    )
     return env
 
 def get_buttons(env):
