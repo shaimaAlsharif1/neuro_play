@@ -1,5 +1,22 @@
 # main_sonic_train.py
+
 """
+PPO Training Pipeline for Sonic 2
+
+Key hyperparameters:
+- Rollout steps: 2048
+- Learning rate: 2.5e-4
+- Clip range: 0.2
+- GAE lambda: 0.95
+
+Training loop:
+1. Collect 2048 steps of experience
+2. Compute advantages using GAE
+3. Update policy for 4 epochs
+4. Save checkpoint every 50k steps
+"""
+"""
+
 Simple PPO training loop for Sonic 2 using your existing env + network.
 - Adapts to (H,W) or (H,W,1) observations
 - Handles Gymnasium 5-tuple steps

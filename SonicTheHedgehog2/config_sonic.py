@@ -40,3 +40,21 @@ SAVE_FREQ = 50_000
 
 # ---------------------- Device ----------------------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+
+def print_config():
+    """Display all hyperparameters for logging"""
+    print("="*50)
+    print("CONFIGURATION")
+    print("="*50)
+    print(f"Game: {GAME_ID}")
+    print(f"State: {STATE}")
+    print(f"Frame skip: {FRAME_SKIP}")
+    print(f"Frame stack: {FRAME_STACK}")
+    print(f"Image size: {IMG_SIZE}x{IMG_SIZE}")
+    print(f"Learning rate: {LEARNING_RATE}")
+    print(f"Gamma: {GAMMA}")
+    print(f"Device: {DEVICE}")
+    print("="*50)
+
