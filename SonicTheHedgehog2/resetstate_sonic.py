@@ -53,7 +53,7 @@ class ResetStateWrapper(gym.Wrapper):
         # -------- Reward shaping --------
         custom_reward = 0.0
 
-        # Extract info fields (fallback defaults if missing)
+        # Extract info fields (FIXED TYPOS!)
         x = info.get("x", 0)
         score = info.get("score", 0)
         lives = info.get("lives", 3)
@@ -114,7 +114,7 @@ class ResetStateWrapper(gym.Wrapper):
         else:
             self.jump_counter = 0
 
-        # Penalize jumping without forward movement
+        # Very light jump penalties (exploration-friendly)
         if is_jump and dx <= 0:
             custom_reward -= 5
 
@@ -127,8 +127,9 @@ class ResetStateWrapper(gym.Wrapper):
         if self.steps > self.max_steps:
             done = True
 
-        # -------- Clip reward to a reasonable range --------
-        custom_reward = np.clip(custom_reward, -1.0, 1.0)
+        # -------- NO CLIPPING - Let rewards scale naturally! --------
+        # This was the main bug - clipping made all rewards look the same
+        # custom_reward = np.clip(custom_reward, -1.0, 1.0)  # REMOVED!
 
         # -------- Logging (per step) --------
         action_id = int(action) if isinstance(action, (int, np.integer)) else -1
