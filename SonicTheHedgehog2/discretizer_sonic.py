@@ -23,6 +23,15 @@ class Discretizer(gym.ActionWrapper):
         self.action_space = gym.spaces.Discrete(len(self._decode_discrete_action))
 
     def action(self, act):
+
+        ra_ =np.random.randint(100)
+
+        if ra_ < 15:
+            return self._decode_discrete_action[2].copy()
+
+
+
+
         return self._decode_discrete_action[act].copy()
 
 

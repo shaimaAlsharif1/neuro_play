@@ -67,23 +67,23 @@ class ResetStateWrapper(gym.Wrapper):
         # 1) Reward forward progress
         dx = x - prev_x
         if dx > 0:
-            custom_reward += 0.1 * (dx / 100.0)
+            custom_reward += 3 * (dx / 100.0)
         elif dx == 0:
-            custom_reward -= 0.05  # stronger penalty for staying still
+            custom_reward -= 1  # stronger penalty for staying still
         elif dx < 0:
-            custom_reward -= 0.1  # penalty for moving backward
+            custom_reward -= 50  # penalty for moving backward
 
         # 2) Small dense reward for proximity to level end
-        custom_reward += (x / screen_x_end) * 0.5
+        custom_reward += (x / screen_x_end) * 20
 
         # 3) Penalty for losing a life (and end episode)
         if lives < prev_lives:
-            custom_reward -= 1.0
+            custom_reward -= 20
             done = True
 
         # 4) Bonus for finishing the level
         if x >= screen_x_end:
-            custom_reward += 1.0
+            custom_reward += 200
             done = True
 
         # -------- Jump control (reduce useless jumping) --------
@@ -111,11 +111,11 @@ class ResetStateWrapper(gym.Wrapper):
 
         # Penalize jumping without forward movement
         if is_jump and dx <= 0:
-            custom_reward -= 0.02
+            custom_reward -= 5
 
         # Penalize jump spam beyond 3 consecutive jumps
-        if self.jump_counter > 3:
-            custom_reward -= 0.1 * (self.jump_counter - 3)
+        if self.jump_counter > 2:
+            custom_reward -= 40 * (self.jump_counter )
 
         # -------- Episode step cap --------
         self.steps += 1
