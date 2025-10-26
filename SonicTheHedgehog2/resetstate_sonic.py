@@ -1,14 +1,14 @@
-# resetstate_sonic.py
 import gymnasium as gym
 import numpy as np
 import os
 import pandas as pd
 
+
 class ResetStateWrapper(gym.Wrapper):
     """
     Custom reward shaping + per-step logging for Sonic the Hedgehog 2.
-    - Encourages moving forward with strong signal
-    - Minimal penalties to allow exploration
+    - Encourages moving forward
+    - Penalizes idling and useless jump spam
     - Records every step (action, reward, progress) and writes a CSV per episode
     """
 
@@ -55,34 +55,33 @@ class ResetStateWrapper(gym.Wrapper):
 
         # Extract info fields (FIXED TYPOS!)
         x = info.get("x", 0)
-        rings = info.get("rings", 0)          # FIXED: was "ringss"
-        lives = info.get("lives", 3)          # FIXED: was "livee"
-        score = info.get("score", 0)          # FIXED: was "scor"
+        score = info.get("score", 0)
+        lives = info.get("lives", 3)
         screen_x_end = info.get("screen_x_end", 10000)
 
         if self.prev_info is None:
             self.prev_info = info
-
         prev_x = self.prev_info.get("x", 0)
         prev_lives = self.prev_info.get("lives", 3)
 
-        # 1) STRONG reward for moving forward
+        # 1) Reward forward progress
         dx = x - prev_x
         if dx > 0:
-            custom_reward += 1.0 * (dx / 100.0)  # 10x stronger than before!
-        elif dx < 0:  # Moved backward (rare but discourage)
-            custom_reward -= 0.3 * (abs(dx) / 100.0)
-        # NO penalty for standing still - let agent explore
+            custom_reward += 0.1 * (dx / 100.0)
+        elif dx == 0:
+            custom_reward -= 0.05  # stronger penalty for staying still
+        elif dx < 0:
+            custom_reward -= 0.1  # penalty for moving backward
 
-        # 2) REMOVED position bonus - it was confusing the learning signal
-        # The agent should be rewarded for MOVING, not just BEING somewhere
+        # 2) Small dense reward for proximity to level end
+        custom_reward += (x / screen_x_end) * 0.5
 
-        # 3) Death penalty (now works because lives variable is correct!)
+        # 3) Penalty for losing a life (and end episode)
         if lives < prev_lives:
             custom_reward -= 5.0  # Strong penalty
             done = True
 
-        # 4) Level completion bonus
+        # 4) Bonus for finishing the level
         if x >= screen_x_end:
             custom_reward += 10.0  # Big reward for finishing!
             done = True
@@ -134,7 +133,6 @@ class ResetStateWrapper(gym.Wrapper):
             "action": action_id,
             "is_jump": bool(is_jump),
             "x": x,
-            "rings": rings,
             "reward": round(float(custom_reward), 4),
         }
         self.episode_records.append(record)
