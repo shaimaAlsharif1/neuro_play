@@ -1,13 +1,36 @@
+# ==== Python cache ====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+
+# ==== Environment ====
+.env
+.envrc
+
+# ==== Checkpoints & Training outputs ====
+checkpoints/
+logs/
+mask/
 raw_data/
-
 frames/
-
-SonicTheHedgehog2/videos
-
+SonicTheHedgehog2/videos/
 *.mp4
+*.gif
+*.csv
 
+# ==== IDE & OS ====
+.vscode/
+.idea/
+.DS_Store
+
+# ==== Jupyter Notebooks ====
 notebooks/
-
 *.ipynb
+*.ipynb_checkpoints/
 
+# ==== Other Projects ====
 LunarLander-project-main/__pycache__/
+LunarLander-project-main/.ipynb_checkpoints/
+LunarLander-project-main/*.ipynb

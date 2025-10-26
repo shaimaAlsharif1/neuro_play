@@ -82,8 +82,8 @@ run_lunar_custom_seed:
 run_lunar_full_cycle:
 	python LunarLander-project-main/main_lunar.py --train --train_steps $(TRAIN_STEPS) --eval_episodes $(EVAL_EPISODES) $(RENDER) --seed $(SEED)
 
-run_lunar_eval_only:
-	python LunarLander-project-main/train.py --eval_only --eval_episodes $(EVAL_EPISODES) $(RENDER) --seed $(SEED) --save_video
+run_lunar_trained:
+	python LunarLander-project-main/main_lunar.py --run_trained --eval_episodes $(EVAL_EPISODES) $(RENDER) --seed $(SEED) --save_video
 retro_sonic:
 	sudo apt-get install python3-opengl
 	python -m retro.import SonicTheHedgehog2/Sonic\ The\ Hedgehog\ 2\ \(World\)\ \(Rev\ A\)
