@@ -37,7 +37,7 @@ LEARNING_RATE = 2.5e-4
 GAMMA = 0.99
 CLIP_RANGE = 0.2
 TOTAL_TIMESTEPS = 1_000_000
-SAVE_FREQ = 50_000
+SAVE_FREQ = 100_000
 
 # ---------------------- Device ----------------------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

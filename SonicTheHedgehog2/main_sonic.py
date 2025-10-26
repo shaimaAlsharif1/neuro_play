@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 import numpy as np
-from environment_soinc import SonicEnv
+from environment_sonic import SonicEnv
 
 # --- retro (stable-retro / gym-retro) ---
 try:
@@ -198,6 +198,10 @@ def run_episode(env, policy_fn, max_steps: int, viewer: PygameViewer | None,
     truncated = False
 
     while not done and not truncated and steps < max_steps:
+
+        rand_ = np.random.random(10)
+        if rand_< 2:
+            action = random_policy(env.action_space)
         action = policy_fn(obs, steps)
 
         # Step (gymnasium vs gym)
