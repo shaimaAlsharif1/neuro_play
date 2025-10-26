@@ -5,8 +5,9 @@
 PPO Training Pipeline for Sonic 2
 Includes extra scalar features: lives, screen_x, screen_y, screen_x_end
 """
-
 import os
+os.environ["SDL_VIDEODRIVER"] = "dummy"
+
 import numpy as np
 import torch
 import torch.nn.functional as F
