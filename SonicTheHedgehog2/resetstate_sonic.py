@@ -55,9 +55,9 @@ class ResetStateWrapper(gym.Wrapper):
 
         # Extract info fields (fallback defaults if missing)
         x = info.get("x", 0)
-        rings = info.get("rings", 0)
-        lives = info.get("lives", 3)
-        score = info.get("score", 0)
+        rings = info.get("ringss", 3)
+        score = info.get("scor", 0)
+        lives = info.get("livee", 0)
         screen_x_end = info.get("screen_x_end", 10000)
 
         if self.prev_info is None:
@@ -75,8 +75,8 @@ class ResetStateWrapper(gym.Wrapper):
             custom_reward -= 0.01  # small penalty for idling
 
         # 2) Penalty for losing rings
-        if rings < prev_rings:
-            custom_reward -= 0.3
+      #  if rings < prev_rings:
+       #     custom_reward -= 0.3
 
         # 3) Small dense reward for proximity to level end
         custom_reward += (x / screen_x_end) * 0.5
