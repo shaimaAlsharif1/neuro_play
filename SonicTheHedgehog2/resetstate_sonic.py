@@ -75,6 +75,9 @@ class ResetStateWrapper(gym.Wrapper):
 
         # 2) Small dense reward for proximity to level end
         custom_reward += (x / screen_x_end) * 20
+         # -------- Time/Progress penalty --------
+        progress = x / screen_x_end  # fraction of level completed
+        custom_reward -= (1 - progress) * 0.5  # penalize for slow progress
 
         # 3) Penalty for losing a life (and end episode)
         if lives < prev_lives:
@@ -86,7 +89,9 @@ class ResetStateWrapper(gym.Wrapper):
             custom_reward += 200
             done = True
 
-        # 5) LIGHT jump penalties (much less restrictive)
+
+
+        # -------- Jump control (reduce useless jumping) --------
         buttons = getattr(self.env.unwrapped, "buttons", [])
         jump_buttons = ['A', 'B', 'C']
 
@@ -137,16 +142,8 @@ class ResetStateWrapper(gym.Wrapper):
         }
         self.episode_records.append(record)
 
-        # Force-save logs if max steps reached (even if the env didn't signal done)
-        if self.steps >= self.max_steps - 1 and self.episode_records:
-            df = pd.DataFrame(self.episode_records)
-            self.episode_id += 1
-            path = os.path.join(self.log_dir, f"episode_{self.episode_id:03d}.csv")
-            df.to_csv(path, index=False)
-            print(f"📄 Episode log (forced save) → {path}")
-            self.episode_records = []
 
-        # Update previous info snapshot
+    # Update previous info snapshot
         self.prev_info = info
 
         # Return in Gymnasium's 5-tuple format

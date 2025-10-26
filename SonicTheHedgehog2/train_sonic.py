@@ -191,6 +191,7 @@ def main():
                         "cfg": dict(A=IMG_SIZE, K=obs_channels, actions=num_actions)}, ckpt)
             print(f"💾 saved {ckpt}")
 
+
     env.close()
     print("✅ Training finished.")
 
