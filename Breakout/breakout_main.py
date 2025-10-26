@@ -8,6 +8,11 @@ from gymnasium.wrappers import AtariPreprocessing
 import os
 
 model_path = "dqn_breakout_model.h5"
+# Reward Shaping Constants
+# We amplify the standard environment reward and heavily penalize life loss.
+SCORE_MULTIPLIER = 4.0        # Amplifies the reward received for breaking bricks (was PADDLE_HIT_REWARD = 1)
+LIFE_LOSS_PENALTY = -7.0      # Increased penalty for losing a life (was -5.0)
+TIME_STEP_PENALTY = -0.001    # Small penalty per step to encourage faster play
 
 # --- Hyperparameters ---
 batch_size = 32
@@ -42,6 +47,7 @@ update_target_network = 10000
 
 # --- Create Q-network ---
 def build_model(num_actions):
+    """Creates the convolutional neural network model for DQN."""
     return keras.Sequential([
         keras.layers.Input(shape=(84, 84, 4)),  # 4 stacked frames
         keras.layers.Conv2D(32, 8, strides=4, activation='relu'),
@@ -52,6 +58,7 @@ def build_model(num_actions):
         keras.layers.Dense(num_actions, activation='linear')
     ])
 
+# Initialize or load models
 if os.path.exists(model_path):
     print("Loading existing model...")
     model = keras.models.load_model(model_path)
@@ -62,8 +69,11 @@ else:
     model_target = build_model(num_actions)
     model_target.set_weights(model.get_weights())
 
+# Initialize environment
+# FIX: Changed render_mode to "human" to display the game window.
 env = gym.make("ALE/Breakout-v5", render_mode="human", frameskip=1)
 env = AtariPreprocessing(env, frame_skip=4, grayscale_obs=True, scale_obs=True)
+
 # --- Training loop ---
 while episode_count < max_episodes:
     observation, _ = env.reset()
@@ -91,21 +101,43 @@ while episode_count < max_episodes:
         epsilon -= (1.0 - epsilon_min) / epsilon_decay_frames
         epsilon = max(epsilon, epsilon_min)
 
+        # Store the number of lives BEFORE the step
+        # This requires accessing the ALE object via unwrapped
+        lives_before = env.unwrapped.ale.lives() 
+
         # --- Apply action ---
-        state_next, reward, done, _, _ = env.step(action)
+        state_next, reward, done, _, info = env.step(action) # reward is the standard score change
         frame_stack.append(state_next)
         state_next_stacked = np.stack(frame_stack, axis=-1)  # (84, 84, 4)
-        episode_reward += reward
+
+        # *** REWARD SHAPING LOGIC ***
+        lives_after = env.unwrapped.ale.lives() 
+
+        # 1. Amplify Standard Score Reward
+        reward *= SCORE_MULTIPLIER
+        
+        # 2. Add Time Step Penalty (Encourages faster action)
+        reward += TIME_STEP_PENALTY
+
+        # 3. Life Loss Penalty: Explicitly punish losing a life
+        if lives_after < lives_before:
+            # Modify the reward with the large negative value
+            reward += LIFE_LOSS_PENALTY 
+            print(f"Lives lost! Applying penalty: {LIFE_LOSS_PENALTY}")
+
+        # Accumulate the SHAPED reward for episode tracking
+        episode_reward += reward 
 
         # --- Store in replay buffer ---
         action_history.append(action)
         state_history.append(state)
         state_next_history.append(state_next_stacked)
-        rewards_history.append(reward)
+        # Store the SHAPED reward
+        rewards_history.append(reward) 
         done_history.append(done)
         state = state_next_stacked
 
-        # --- Training step ---
+        # --- Training step (DQN) ---
         if frame_count % update_after_actions == 0 and len(done_history) > batch_size:
             indices = np.random.choice(len(done_history), batch_size, replace=False)
 
@@ -115,7 +147,7 @@ while episode_count < max_episodes:
             action_sample = np.array([action_history[i] for i in indices])
             done_sample = np.array([float(done_history[i]) for i in indices], dtype=np.float32)
 
-            # Compute target Q-values
+            # Compute target Q-values (DQN update rule)
             future_rewards = model_target.predict(state_next_sample, verbose=0)
             max_future_q = np.max(future_rewards, axis=1)
             updated_q_values = rewards_sample + gamma * max_future_q * (1 - done_sample)
@@ -150,9 +182,13 @@ while episode_count < max_episodes:
         del episode_reward_history[:1]
     running_reward = np.mean(episode_reward_history)
     episode_count += 1
+    
     # Save the trained model
-    model.save(model_path)
-    print(f"Model saved to {model_path}")
+    try:
+        model.save(model_path)
+        print(f"Model saved to {model_path}")
+    except Exception as e:
+        print(f"Error saving model: {e}")
 
     print(f"Episode {episode_count}, Reward: {episode_reward:.2f}, Running Reward: {running_reward:.2f}, Epsilon: {epsilon:.3f}")
 
