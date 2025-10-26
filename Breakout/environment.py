@@ -1,5 +1,7 @@
 import gymnasium as gym
-from gymnasium.wrappers import AtariPreprocessing, FrameStack, RecordVideo
+from gymnasium.wrappers import AtariPreprocessing, RecordVideo
+from gymnasium.wrappers import FrameStackObservation
+import ale_py
 import numpy as np
 import os
 from config import DQNConfig
@@ -12,40 +14,44 @@ from config import DQNConfig
 # env = FrameStack(env, 4)
 # env.seed(DQNConfig.seed)
 
+# env = gym.make("ALE/Breakout-v5", render_mode="human", frameskip=1)
+# env = AtariPreprocessing(env, frame_skip=4, grayscale_obs=True, scale_obs=True)
+# obs, _ = env.reset()
+# # print(obs.shape)
 
 def make_env(render: bool = False):
     """
     Headless for training unless render=True (human window).
     """
     render_mode = "human" if render else None
-    env = gym.make("BreakoutNoFrameskip-v4" ,render_mode=render_mode)
-    # Environment preprocessing
-    env = AtariPreprocessing(env)
+    env = gym.make("ALE/Breakout-v5", render_mode=render_mode, frameskip=1)
+    env = AtariPreprocessing(env, frame_skip=4, grayscale_obs=True, scale_obs=True)
+
     # Stack four frames
-    env = FrameStack(env, 4)
-    env.seed(DQNConfig.seed)
+    # env = FrameStackObservation(env, 4)
+    # env.seed(DQNConfig.seed)
     return env
 
 def make_env_human():
     """
     On-screen window for evaluation (requires local GUI).
     """
-    env =  gym.make("BreakoutNoFrameskip-v4", render_mode="human")
+    env =  gym.make("ALE/Breakout-v5", render_mode="human")
     env = AtariPreprocessing(env)
     # Stack four frames
-    env = FrameStack(env, 4)
-    env.seed(DQNConfig.seed)
+    # env = FrameStackObservation(env, 4)
+    # env.seed(DQNConfig.seed)
     return env
 
 def make_env_rgb():
     """
     RGB array for RecordVideo (required for MP4 recording).
     """
-    env =  gym.make("BreakoutNoFrameskip-v4", render_mode="rgb_array")
+    env =  gym.make("ALE/Breakout-v5", render_mode="rgb_array")
     env = AtariPreprocessing(env)
     # Stack four frames
-    env = FrameStack(env, 4)
-    env.seed(DQNConfig.seed)
+    # env = FrameStackObservation(env, 4)
+    # env.seed(DQNConfig.seed)
 
     return env
 
@@ -73,8 +79,8 @@ def random_rollout(episodes: int = 3, render: bool = True, seed: int = 1, save_v
     env = make_env(render=render)
     env = AtariPreprocessing(env)
     # Stack four frames
-    env = FrameStack(env, 4)
-    env.seed(DQNConfig.seed)
+    # env = FrameStackObservation(env, 4)
+    # env.seed(DQNConfig.seed)
     try:
         for ep in range(1, episodes + 1):
             s, _ = env.reset(seed=seed + ep)
