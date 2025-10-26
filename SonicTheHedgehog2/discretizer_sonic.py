@@ -51,5 +51,9 @@ class SonicDiscretizer(Discretizer):
             ['UP'],             # 7
             ['A'],              # 8
             ['B'],              # 9
-        ]
+         # --- add these for momentum / walls ---
+    ['DOWN','B'],           # 10: spin-dash charge
+    ['RIGHT','DOWN','B'],   # 11: spin-dash + hold right (release burst)
+    ['RIGHT','DOWN'],       # 12: hold crouch facing right (helps transitions)
+]
         super().__init__(env, combos)

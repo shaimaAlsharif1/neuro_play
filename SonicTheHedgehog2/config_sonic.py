@@ -12,7 +12,7 @@ import torch
 GAME_ID = "SonicTheHedgehog2-Genesis"
 STATE = "EmeraldHillZone.Act1"
 
-FRAME_SKIP = 4            # Number of frames to skip per action
+FRAME_SKIP = 2            # Number of frames to skip per action
 FRAME_STACK = 4           # Number of frames stacked for CNN input
 IMG_SIZE = 84             # Resized frame width/height
 MAX_EPISODE_STEPS = 4500  # Max frames per episode (~75s)
@@ -30,6 +30,11 @@ DISCRETE_ACTIONS = [
     ['A'],                # 8
     ['B'],                # 9
     # ['RIGHT', 'C'],
+     # --- add these for momentum / walls ---
+    ['DOWN','B'],           # 10: spin-dash charge
+    ['RIGHT','DOWN','B'],   # 11: spin-dash + hold right (release burst)
+    ['RIGHT','DOWN'],       # 12: hold crouch facing right (helps transitions)
+
 ]
 
 # ---------------------- PPO hyperparameters ----------------------
