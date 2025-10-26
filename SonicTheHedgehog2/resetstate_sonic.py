@@ -1,14 +1,14 @@
-# resetstate_sonic.py
 import gymnasium as gym
 import numpy as np
 import os
 import pandas as pd
 
+
 class ResetStateWrapper(gym.Wrapper):
     """
     Custom reward shaping + per-step logging for Sonic the Hedgehog 2.
-    - Encourages moving forward with strong signal
-    - Minimal penalties to allow exploration
+    - Encourages moving forward
+    - Penalizes idling and useless jump spam
     - Records every step (action, reward, progress) and writes a CSV per episode
     """
 
@@ -53,41 +53,40 @@ class ResetStateWrapper(gym.Wrapper):
         # -------- Reward shaping --------
         custom_reward = 0.0
 
-        # Extract info fields (FIXED TYPOS!)
+        # Extract info fields (fallback defaults if missing)
         x = info.get("x", 0)
-        rings = info.get("rings", 0)          # FIXED: was "ringss"
-        lives = info.get("lives", 3)          # FIXED: was "livee"
-        score = info.get("score", 0)          # FIXED: was "scor"
+        score = info.get("score", 0)
+        lives = info.get("lives", 3)
         screen_x_end = info.get("screen_x_end", 10000)
 
         if self.prev_info is None:
             self.prev_info = info
-
         prev_x = self.prev_info.get("x", 0)
         prev_lives = self.prev_info.get("lives", 3)
 
-        # 1) STRONG reward for moving forward
+        # 1) Reward forward progress
         dx = x - prev_x
         if dx > 0:
-            custom_reward += 1.0 * (dx / 100.0)  # 10x stronger than before!
-        elif dx < 0:  # Moved backward (rare but discourage)
-            custom_reward -= 0.3 * (abs(dx) / 100.0)
-        # NO penalty for standing still - let agent explore
+            custom_reward += 0.1 * (dx / 100.0)
+        elif dx == 0:
+            custom_reward -= 0.05  # stronger penalty for staying still
+        elif dx < 0:
+            custom_reward -= 0.1  # penalty for moving backward
 
-        # 2) REMOVED position bonus - it was confusing the learning signal
-        # The agent should be rewarded for MOVING, not just BEING somewhere
+        # 2) Small dense reward for proximity to level end
+        custom_reward += (x / screen_x_end) * 0.5
 
-        # 3) Death penalty (now works because lives variable is correct!)
+        # 3) Penalty for losing a life (and end episode)
         if lives < prev_lives:
-            custom_reward -= 5.0  # Strong penalty
+            custom_reward -= 1.0
             done = True
 
-        # 4) Level completion bonus
+        # 4) Bonus for finishing the level
         if x >= screen_x_end:
-            custom_reward += 10.0  # Big reward for finishing!
+            custom_reward += 1.0
             done = True
 
-        # 5) LIGHT jump penalties (much less restrictive)
+        # -------- Jump control (reduce useless jumping) --------
         buttons = getattr(self.env.unwrapped, "buttons", [])
         jump_buttons = ['A', 'B', 'C']
 
@@ -110,22 +109,21 @@ class ResetStateWrapper(gym.Wrapper):
         else:
             self.jump_counter = 0
 
-        # Very light jump penalties (exploration-friendly)
+        # Penalize jumping without forward movement
         if is_jump and dx <= 0:
-            custom_reward -= 0.005  # Was 0.02 - much lighter
+            custom_reward -= 0.02
 
-        # Allow more jumps before penalizing
-        if self.jump_counter > 5:  # Was 3
-            custom_reward -= 0.02 * (self.jump_counter - 5)  # Was 0.1
+        # Penalize jump spam beyond 3 consecutive jumps
+        if self.jump_counter > 3:
+            custom_reward -= 0.1 * (self.jump_counter - 3)
 
         # -------- Episode step cap --------
         self.steps += 1
         if self.steps > self.max_steps:
             done = True
 
-        # -------- NO CLIPPING - Let rewards scale naturally! --------
-        # This was the main bug - clipping made all rewards look the same
-        # custom_reward = np.clip(custom_reward, -1.0, 1.0)  # REMOVED!
+        # -------- Clip reward to a reasonable range --------
+        custom_reward = np.clip(custom_reward, -1.0, 1.0)
 
         # -------- Logging (per step) --------
         action_id = int(action) if isinstance(action, (int, np.integer)) else -1
@@ -134,7 +132,6 @@ class ResetStateWrapper(gym.Wrapper):
             "action": action_id,
             "is_jump": bool(is_jump),
             "x": x,
-            "rings": rings,
             "reward": round(float(custom_reward), 4),
         }
         self.episode_records.append(record)
