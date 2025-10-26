@@ -1,9 +1,9 @@
 # main_sonic_train.py
-# main_sonic_train.py
 
 """
 PPO Training Pipeline for Sonic 2
 Includes extra scalar features: lives, screen_x, screen_y, screen_x_end
+Automatically resumes from last checkpoint if available.
 """
 
 import os
@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.distributions import Categorical
+from glob import glob
 
 from environment_sonic import make_env
 from network_sonic import ActorCriticCNNExtra
@@ -72,13 +73,27 @@ def main():
     ).to(DEVICE)
     opt = torch.optim.Adam(net.parameters(), lr=LEARNING_RATE)
 
+    # Check for existing checkpoint
+    ckpt_dir = "checkpoints"
+    os.makedirs(ckpt_dir, exist_ok=True)
+    ckpt_files = sorted(glob(os.path.join(ckpt_dir, "sonic_ppo_*.pt")))
+
+    global_steps = 0
+    if ckpt_files:
+        latest_ckpt = ckpt_files[-1]
+        print(f"🔄 Found checkpoint: {latest_ckpt} — resuming training...")
+        data = torch.load(latest_ckpt, map_location=DEVICE)
+        net.load_state_dict(data["model"])
+        global_steps = data.get("steps", 0)
+        print(f"✅ Resumed from step {global_steps}")
+    else:
+        print("🚀 No checkpoint found — starting fresh training.")
+
     # Hyperparams
     rollout_steps = 2048
     epochs = 4
     batch_size = 64
     lam = 0.95
-
-    global_steps = 0
     episode = 0
     obs_chw = chw0
     ep_return = 0.0
@@ -186,10 +201,12 @@ def main():
         if global_steps // SAVE_FREQ != (global_steps - rollout_steps) // SAVE_FREQ:
             os.makedirs("checkpoints", exist_ok=True)
             ckpt = f"checkpoints/sonic_ppo_{global_steps//1000}k.pt"
-            torch.save({"model": net.state_dict(),
-                        "steps": global_steps,
-                        "cfg": dict(A=IMG_SIZE, K=obs_channels, actions=num_actions)}, ckpt)
-            print(f"💾 saved {ckpt}")
+            torch.save({
+                "model": net.state_dict(),
+                "steps": global_steps,
+                "cfg": dict(A=IMG_SIZE, K=obs_channels, actions=num_actions)
+            }, ckpt)
+            print(f"💾 Saved {ckpt}")
 
     env.close()
     print("✅ Training finished.")
