@@ -1,9 +1,11 @@
 import argparse
 import os
+from environment import *
+from train import *
 
 # --- Constants for Breakout ---
 DEFAULT_ENV_ID = "BreakoutNoFrameskip-v4"
-DEFAULT_TRAIN_STEPS = 5_000_000  # Atari training is typically in millions of steps
+DEFAULT_TRAIN_STEPS = 500000  # Atari training is typically in millions of steps
 DEFAULT_RANDOM_EPISODES = 5
 DEFAULT_EVAL_EPISODES = 10
 
@@ -44,19 +46,17 @@ def main():
         # Note: You'll need to define the random_rollout function to accept the 'env' argument
         print(f"Running random rollout on {args.env} for {args.episodes} episodes...")
         # Assume random_rollout function is defined elsewhere
-        # random_rollout(env_id=args.env, episodes=args.episodes, render=args.render, seed=args.seed)
-        # Placeholder for actual function call
+        random_rollout(env_id=args.env, episodes=args.episodes, render=args.render, seed=args.seed)
 
     elif args.train:
         print(f"Starting DQN training on {args.env} for {args.train_steps} steps...")
         # Assume train_dqn function is defined elsewhere
-        # train_dqn(env_id=args.env,
-        #           train_steps=args.train_steps,
-        #           eval_episodes=args.eval_episodes,
-        #           render_eval=args.render,
-        #           save_video=args.save_video,
-        #           seed=args.seed)
-        # Placeholder for actual function call
+        run_dqn_training(
+                    train_steps=args.train_steps,
+                    render=args.render,
+                    seed=args.seed,
+                    #checkpoint_path=args.checkpoint # Pass checkpoint for resuming
+                )
 
     else:
         print("Error: Select a mode: --random or --train (see --help)")
