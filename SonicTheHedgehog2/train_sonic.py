@@ -57,7 +57,7 @@ def minibatches(*arrays, batch_size=64, shuffle=True):
 # Training
 # ---------------------------
 def main():
-    env = make_env(render="human")
+    env = make_env(render=False)
 
     # Infer obs shape
     obs0, info = env.reset() if isinstance(env.reset(), tuple) else (env.reset(), {})
