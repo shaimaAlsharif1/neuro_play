@@ -3,7 +3,7 @@
 """
 PPO Training Pipeline for Sonic 2
 Includes extra scalar features: lives, screen_x, screen_y, screen_x_end
-Automatically resumes from last checkpoint if available.
+Automatically resumes from last checkpoint if available
 """
 
 import os
