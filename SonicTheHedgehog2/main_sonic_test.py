@@ -1,8 +1,9 @@
 # main_sonic_test.py
 """
 Test Sonic environment.
-Runs a random episode, prints total reward,
-and saves detailed logs (actions + rewards) as CSV.
+
+Runs a short random episode, prints total reward,
+and saves detailed logs (actions + rewards) to CSV.
 """
 
 from environment_sonic import make_env
@@ -11,7 +12,7 @@ import pandas as pd
 import os
 
 # =============================
-# 1️⃣ إنشاء البيئة
+# 1️⃣ Create environment
 # =============================
 env = make_env(render=True)
 
@@ -27,10 +28,10 @@ done = False
 print("🚀 Running random test episode...\n")
 
 # =============================
-# 2️⃣ حلقة الأكشنات العشوائية
+# 2️⃣ Random action loop
 # =============================
-for step_idx in range(1000):  # تجربة قصيرة
-    action = env.action_space.sample()
+for step_idx in range(1000):  # short test episode
+    action = env.action_space.sample()  # random action
     obs, reward, terminated, truncated, info = env.step(action)
     done = terminated or truncated
     total_reward += reward
@@ -42,10 +43,10 @@ for step_idx in range(1000):  # تجربة قصيرة
 print(f"\n✅ Total reward: {total_reward}")
 
 # =============================
-# 3️⃣ البحث عن ResetStateWrapper داخل السلسلة
+# 3️⃣ Locate ResetStateWrapper in the wrapper chain
 # =============================
 def find_wrapper(env, wrapper_type):
-    """Traverse nested wrappers to locate the desired one."""
+    """Traverse nested wrappers to find the specified wrapper type."""
     current = env
     depth = 0
     while hasattr(current, "env"):
@@ -59,7 +60,7 @@ def find_wrapper(env, wrapper_type):
 rs = find_wrapper(env, ResetStateWrapper)
 
 # =============================
-# 4️⃣ حفظ التقرير (حتى لو لم تُنهِ البيئة الحلقة)
+# 4️⃣ Save report even if episode did not end normally
 # =============================
 if rs is not None and getattr(rs, "episode_records", None):
     if rs.episode_records:
@@ -74,7 +75,7 @@ else:
     print("⚠️ No ResetStateWrapper found — no logs to save.")
 
 # =============================
-# 5️⃣ إغلاق البيئة
+# 5️⃣ Close environment
 # =============================
 env.close()
 print("\n🎮 Test finished successfully!")

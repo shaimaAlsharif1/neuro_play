@@ -6,10 +6,10 @@ import pandas as pd
 
 class ResetStateWrapper(gym.Wrapper):
     """
-    Custom reward shaping + action logging for Sonic the Hedgehog 2.
-    - Encourages forward progress
-    - Penalizes idling, ring loss, and useless jumps
-    - Logs each step (action, reward, progress) to CSV after every episode
+    Custom reward shaping + per-step logging for Sonic the Hedgehog 2.
+    - Encourages moving forward
+    - Penalizes idling, ring loss, and useless jump spam
+    - Records every step (action, reward, progress) and writes a CSV per episode
     """
 
     def __init__(self, env, max_steps=4500, log_dir="logs"):
@@ -20,7 +20,7 @@ class ResetStateWrapper(gym.Wrapper):
         self.prev_info = None
         self.jump_counter = 0
 
-        # 🟢 Logging setup
+        # Logging setup
         self.log_dir = log_dir
         os.makedirs(log_dir, exist_ok=True)
         self.episode_records = []
@@ -39,11 +39,10 @@ class ResetStateWrapper(gym.Wrapper):
         return obs, info
 
     def step(self, action):
-        """Performs one environment step with custom rewards and logs."""
-
+        """One environment step with shaped reward and logging."""
         step = self.env.step(action)
 
-        # ✅ دعم كلتا الصيغتين (Gym/Gymnasium)
+        # Support both (obs, reward, terminated, truncated, info) and (obs, reward, done, info)
         if len(step) == 5:
             obs, reward, terminated, truncated, info = step
             done = terminated or truncated
@@ -51,12 +50,10 @@ class ResetStateWrapper(gym.Wrapper):
             obs, reward, done, info = step
             terminated, truncated = done, False
 
-        # -----------------------------
-        # 🧮 حساب المكافأة المخصصة
-        # -----------------------------
+        # -------- Reward shaping --------
         custom_reward = 0.0
 
-        # معلومات اللعبة
+        # Extract info fields (fallback defaults if missing)
         x = info.get("x", 0)
         rings = info.get("rings", 0)
         lives = info.get("lives", 3)
@@ -70,37 +67,35 @@ class ResetStateWrapper(gym.Wrapper):
         prev_rings = self.prev_info.get("rings", 0)
         prev_lives = self.prev_info.get("lives", 3)
 
-        # 1️⃣ مكافأة التقدم للأمام
+        # 1) Reward forward progress
         dx = x - prev_x
         if dx > 0:
             custom_reward += 0.1 * (dx / 100.0)
         elif dx == 0:
-            custom_reward -= 0.01  # عقوبة التوقف
+            custom_reward -= 0.01  # small penalty for idling
 
-        # 2️⃣ عقوبة فقدان خواتم
+        # 2) Penalty for losing rings
         if rings < prev_rings:
             custom_reward -= 0.3
 
-        # 3️⃣ مكافأة الاقتراب من نهاية المرحلة
+        # 3) Small dense reward for proximity to level end
         custom_reward += (x / screen_x_end) * 0.5
 
-        # 4️⃣ عقوبة فقدان حياة
+        # 4) Penalty for losing a life (and end episode)
         if lives < prev_lives:
             custom_reward -= 1.0
             done = True
 
-        # 5️⃣ مكافأة الوصول للنهاية
+        # 5) Bonus for finishing the level
         if x >= screen_x_end:
             custom_reward += 1.0
             done = True
 
-        # -----------------------------
-        # 🎯 منطق القفز الذكي
-        # -----------------------------
+        # -------- Jump control (reduce useless jumping) --------
         buttons = getattr(self.env.unwrapped, "buttons", [])
         jump_buttons = ['A', 'B', 'C']
 
-        # إذا الأكشن رقم (Discrete) نحوله إلى مصفوفة أزرار
+        # If the action is Discrete, convert it to the button array via the discretizer
         if hasattr(self.env, "action") and isinstance(action, (int, np.integer)):
             try:
                 action_array = self.env.action(action)
@@ -109,39 +104,33 @@ class ResetStateWrapper(gym.Wrapper):
         else:
             action_array = action
 
-        # تحديد الأزرار المضغوطة
+        # Which buttons are pressed this step?
         pressed_buttons = [buttons[i] for i, val in enumerate(action_array) if val == 1]
         is_jump = any(b in pressed_buttons for b in jump_buttons)
 
-        # تتبع عدد القفزات المتتالية
+        # Track consecutive jumps
         if is_jump:
             self.jump_counter += 1
         else:
             self.jump_counter = 0
 
-        # عقوبة القفز في نفس المكان
+        # Penalize jumping without forward movement
         if is_jump and dx <= 0:
             custom_reward -= 0.02
 
-        # عقوبة القفز المتكرر (spam)
+        # Penalize jump spam beyond 3 consecutive jumps
         if self.jump_counter > 3:
             custom_reward -= 0.1 * (self.jump_counter - 3)
 
-        # -----------------------------
-        # ⏱️ حد أقصى للخطوات
-        # -----------------------------
+        # -------- Episode step cap --------
         self.steps += 1
         if self.steps > self.max_steps:
             done = True
 
-        # -----------------------------
-        # ⚖️ تطبيع المكافأة
-        # -----------------------------
+        # -------- Clip reward to a reasonable range --------
         custom_reward = np.clip(custom_reward, -1.0, 1.0)
 
-        # -----------------------------
-        # 🧾 نظام التتبع (Logging)
-        # -----------------------------
+        # -------- Logging (per step) --------
         action_id = int(action) if isinstance(action, (int, np.integer)) else -1
         record = {
             "step": self.steps,
@@ -153,8 +142,7 @@ class ResetStateWrapper(gym.Wrapper):
         }
         self.episode_records.append(record)
 
-        # حفظ التقرير عند نهاية الحلقة
-        # Force-save logs if max steps reached (even if not "done")
+        # Force-save logs if max steps reached (even if the env didn't signal done)
         if self.steps >= self.max_steps - 1 and self.episode_records:
             df = pd.DataFrame(self.episode_records)
             self.episode_id += 1
@@ -163,10 +151,10 @@ class ResetStateWrapper(gym.Wrapper):
             print(f"📄 Episode log (forced save) → {path}")
             self.episode_records = []
 
-        # تحديث الحالة السابقة
+        # Update previous info snapshot
         self.prev_info = info
 
-        # إرجاع القيم بالصيغـة الحديثة (5 قيم)
+        # Return in Gymnasium's 5-tuple format
         terminated = done
         truncated = False
         return obs, custom_reward, terminated, truncated, info

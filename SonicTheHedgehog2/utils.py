@@ -30,7 +30,6 @@ class SkipFrame(gym.Wrapper):
         for _ in range(self._skip):
             step = self.env.step(action)
 
-            # ✅ التعامل مع الحالتين (٤ قيم أو ٥ قيم)
             if len(step) == 5:
                 obs, reward, term, trunc, info = step
                 terminated = term or terminated
@@ -44,7 +43,6 @@ class SkipFrame(gym.Wrapper):
             if terminated or truncated:
                 break
 
-        # ✅ إرجاع ٥ قيم دائمًا
         return obs, total_reward, terminated, truncated, info
 
 # ===========================================================
