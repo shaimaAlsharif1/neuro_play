@@ -182,14 +182,14 @@ class ResetStateWrapper(gym.Wrapper):
             # In boss: neutral on jumps unless they cause score gain (handled below)
             pass
 
-        # (E) RINGS — collect good, lose bad (always)
+                # (E) RINGS — collect good, lose bad (balanced)
         if dr > 0:
-            R += 5.0 * dr
-            if dr >= 10:
-                R += 50.0
+            R += 1.0 * dr          # +1 per ring gained
+            if dr >= 10:           # bonus for big pickups
+                R += 10.0
         elif dr < 0:
-            R -= 10.0 * abs(dr)
-            R -= 30.0
+            R -= 2.0 * abs(dr)     # penalty for losing rings
+
 
         # (F) BOSS SCORE REWARD
         if self.in_boss and dscore > 0:
