@@ -210,7 +210,7 @@ while episode_count < max_episodes:
 
         # If the agent performs a No-Op (0) or unnecessary Fire (2), apply a penalty
         # This encourages the agent to prioritize Move Right (1) or Move Left (3)
-        if action == 0 or action == 2:
+        if action == 0 or action == 1:
             reward_adjustment = -0.005 # small penalty for inactivity
         else:
             reward_adjustment = 0.0
@@ -229,7 +229,7 @@ while episode_count < max_episodes:
 
         # 1. Amplify Standard Score Reward
         reward *= SCORE_MULTIPLIER
-        
+
         # 2. Add Time Step Penalty (Encourages faster action)
         reward += TIME_STEP_PENALTY
         
