@@ -1,4 +1,6 @@
 
+# main_sonic_train.py
+
 """
 PPO Training Pipeline for Sonic 2
 Includes extra scalar features: lives, screen_x, screen_y, screen_x_end
@@ -65,9 +67,7 @@ def main():
 
     env = make_env(render='rgb_array', record_video=True)
 
-    out = env.reset()
-    obs0, info = out if isinstance(out, tuple) else (out, {})
-
+    obs0, info = env.reset() if isinstance(env.reset(), tuple) else (env.reset(), {})
     chw0 = to_chw(obs0)
     obs_channels = chw0.shape[0]
     num_actions = env.action_space.n
@@ -167,76 +167,6 @@ def main():
                 break
 
         # PPO update code ...
-
-        with torch.no_grad():
-            o_last = torch.from_numpy(obs_chw)[None].to(DEVICE)
-            e_last = torch.from_numpy(np.array([
-                info.get('lives', 3),
-                info.get('screen_x', 0),
-                info.get('screen_y', 0),
-                info.get('screen_x_end', 10000)
-            ], dtype=np.float32)[None]).to(DEVICE)
-            _, next_value_t = net(o_last, e_last)
-            next_value = float(next_value_t.squeeze().item())
-
-        # 2) Pack rollout buffers → numpy
-        obs_arr   = np.array(obs_buf,   dtype=np.float32)
-        extra_arr = np.array(extra_buf, dtype=np.float32)
-        act_arr   = np.array(act_buf,   dtype=np.int64)
-        logp_arr  = np.array(logp_buf,  dtype=np.float32)
-        rew_arr   = np.array(rew_buf,   dtype=np.float32)
-        val_arr   = np.array(val_buf,   dtype=np.float32)
-        done_arr  = np.array(done_buf,  dtype=np.bool_)
-
-        # 3) Advantages / returns (GAE) + normalize advantages
-        adv_arr, ret_arr = compute_gae(
-            rewards=rew_arr, values=val_arr, dones=done_arr,
-            next_value=next_value, gamma=GAMMA, lam=lam
-        )
-        adv_arr = (adv_arr - adv_arr.mean()) / (adv_arr.std() + 1e-8)
-
-        # 4) Numpy → tensors (device)
-        obs_t     = torch.from_numpy(obs_arr).to(DEVICE)
-        extra_t   = torch.from_numpy(extra_arr).to(DEVICE)
-        actions_t = torch.from_numpy(act_arr).to(DEVICE)
-        oldlogp_t = torch.from_numpy(logp_arr).to(DEVICE)
-        returns_t = torch.from_numpy(ret_arr).to(DEVICE)
-        values_t  = torch.from_numpy(val_arr).to(DEVICE)
-        advs_t    = torch.from_numpy(adv_arr).to(DEVICE)
-
-        # 5) PPO epochs / minibatches
-        for _ in range(epochs):
-            for mb_obs, mb_extra, mb_act, mb_oldlogp, mb_ret, mb_val, mb_adv in minibatches(
-                obs_t, extra_t, actions_t, oldlogp_t, returns_t, values_t, advs_t,
-                batch_size=batch_size, shuffle=True
-            ):
-                logits, value = net(mb_obs, mb_extra)
-                dist = Categorical(logits=logits)
-
-                new_logp = dist.log_prob(mb_act)
-                entropy  = dist.entropy().mean()
-
-                ratio = torch.exp(new_logp - mb_oldlogp)
-                unclipped = ratio * mb_adv
-                clipped   = torch.clamp(ratio, 1.0 - CLIP_RANGE, 1.0 + CLIP_RANGE) * mb_adv
-                policy_loss = -torch.min(unclipped, clipped).mean()
-
-                # value loss (clipped)
-                value_clipped = mb_val + (value.squeeze() - mb_val).clamp(-CLIP_RANGE, CLIP_RANGE)
-                v_loss_unclipped = (value.squeeze() - mb_ret) ** 2
-                v_loss_clipped   = (value_clipped - mb_ret) ** 2
-                value_loss = 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
-
-                # entropy schedule: 0.05 -> 0.01 over first 200k steps
-                ent_coef = 0.05 - 0.04 * min(global_steps / 200_000.0, 1.0)
-
-                # final PPO loss
-                loss = policy_loss + 0.25 * value_loss - ent_coef * entropy
-
-                opt.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(net.parameters(), 0.5)
-                opt.step()
 
         # --- Save checkpoint if needed ---
         if global_steps // SAVE_FREQ != (global_steps - rollout_steps) // SAVE_FREQ:
