@@ -14,16 +14,16 @@ CHECKPOINT_BASE_NAME = "dqn_breakout_full_state_{:04d}.npz"
 # os.makedirs(MODEL_DIR, exist_ok=True) # Ensure the directory exists
 # Reward Shaping Constants
 # We amplify the standard environment reward and heavily penalize life loss.
-SCORE_MULTIPLIER = 4.0        # Amplifies the reward received for breaking bricks 
+SCORE_MULTIPLIER = 10.0        # Amplifies the reward received for breaking bricks 
 LIFE_LOSS_PENALTY = -7.0      # Increased penalty for losing a life
 TIME_STEP_PENALTY = -0.001    # Small penalty per step to encourage faster play
-CHECKPOINT_FREQUENCY = 50 # Save a checkpoint every 50 episodes
+CHECKPOINT_FREQUENCY = 100 # Save a checkpoint every 50 episodes
 # --- Hyperparameters --- 
 batch_size = 32
 gamma = 0.99
 epsilon = 1.0
 epsilon_min = 0.1
-epsilon_decay_frames = 1000000.0
+epsilon_decay_frames = 250000.0
 num_actions = 4
 max_steps_per_episode = 10000
 max_episodes = 1000
