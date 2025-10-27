@@ -19,6 +19,8 @@ from config_sonic import (
     TOTAL_TIMESTEPS, SAVE_FREQ, DEVICE
 )
 
+from gymnasium.wrappers import RecordVideo
+
 # ---------------------------
 # Helpers
 # ---------------------------
@@ -34,6 +36,7 @@ def to_chw(obs_np):
         chw = np.mean(obs_np, axis=-1, keepdims=True).transpose(2, 0, 1)
     return (chw.astype(np.float32) / 255.0)
 
+
 def compute_gae(rewards, values, dones, next_value, gamma=0.99, lam=0.95):
     """Standard GAE (vectorized over time dimension)."""
     T = len(rewards)
@@ -47,6 +50,7 @@ def compute_gae(rewards, values, dones, next_value, gamma=0.99, lam=0.95):
         adv[t] = gae
     returns = adv + values
     return adv, returns
+
 
 def minibatches(*arrays, batch_size=64, shuffle=True):
     n = arrays[0].shape[0]
@@ -92,7 +96,7 @@ def main():
     net = ActorCriticCNNExtra(
         obs_shape=(obs_channels, IMG_SIZE, IMG_SIZE),
         num_actions=num_actions,
-        extra_state_dim=4  # lives, screen_x, screen_y, screen_x_end
+        extra_state_dim=4
     ).to(DEVICE)
     opt = torch.optim.Adam(net.parameters(), lr=LEARNING_RATE)
 
@@ -116,6 +120,20 @@ def main():
     ep_return = 0.0
 
     print(f"✅ Training starts | obs_shape={(obs_channels, IMG_SIZE, IMG_SIZE)} | actions={num_actions}")
+
+
+    ckpt_dir = "checkpoints"
+    os.makedirs(ckpt_dir, exist_ok=True)
+    model_path = os.path.join(ckpt_dir, "sonic_ppo_latest.pt")
+
+    if os.path.exists(model_path):
+            print("\033[93m🔄 Loading existing model...\033[0m")
+            checkpoint = torch.load(model_path)
+            net.load_state_dict(checkpoint["model"])
+
+
+
+
 
     while global_steps < TOTAL_TIMESTEPS:
         # Storage
@@ -274,4 +292,7 @@ def main():
     print("✅ Training finished")
 
 if __name__ == "__main__":
+
+
+
     main()
