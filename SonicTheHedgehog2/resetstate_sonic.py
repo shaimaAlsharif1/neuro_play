@@ -1,7 +1,6 @@
 import gymnasium as gym
 import numpy as np
 import os
-import pandas as pd
 
 
 def _cap(x, lo, hi):
@@ -10,18 +9,19 @@ def _cap(x, lo, hi):
 
 class ResetStateWrapper(gym.Wrapper):
     """
-    Aggressive reward shaping for Sonic 2 with Boss Mode.
+    Reward shaping for Sonic 2 with Boss Mode and balanced ring rewards.
 
-    • Massive reward for going right & fast (progress, streaks, bursts)
-    • Strong ring shaping: collect big +, lose big –
-    • Boss Mode: camera-locked arenas pay for score/hits and survival;
-      relax backtrack/idle penalties; disable 'stuck' resets
-    • Exposes `self.in_boss` for action gating (e.g., enable LEFT only in boss)
+    • Pre-boss: strong incentives for going right/fast, new-best progress,
+      streaks, and speed bursts. Mild time pressure; light penalties for idle/left.
+    • Rings: +1 per ring gained (+10 burst if ≥10 at once); -2 per ring lost.
+      (Balanced magnitudes so rings don't dominate progress.)
+    • Boss Mode: activates only near end of level when scroll stalls; disables
+      'stuck' penalties; pays on score increases (boss hits).
+    • Exposes `in_boss` and `no_progress_steps` for the discretizer.
     """
 
     def __init__(self, env, max_steps=4500, log_dir="logs"):
         super().__init__(env)
-        self.env = env
         self.max_steps = max_steps
 
         # episode state
@@ -29,21 +29,19 @@ class ResetStateWrapper(gym.Wrapper):
         self.prev_info = None
         self.jump_counter = 0
 
-        # movement/progress trackers
+        # movement trackers
         self.x_best = 0
         self.no_progress_steps = 0
         self.right_streak = 0
         self.best_dx = 0
         self.dx_window = [0.0] * 10
 
-        # boss phase flag (exposed)
+        # boss flag
         self.in_boss = False
 
-        # logging
+        # logging (optional dir only)
         self.log_dir = log_dir
         os.makedirs(log_dir, exist_ok=True)
-        self.episode_records = []
-        self.episode_id = 0
 
     def reset(self, **kwargs):
         out = self.env.reset(**kwargs)
@@ -60,13 +58,10 @@ class ResetStateWrapper(gym.Wrapper):
         self.dx_window = [0.0] * 10
 
         self.in_boss = False
-        self.episode_records = []
         return obs, info
 
     def step(self, action):
         step = self.env.step(action)
-
-        # Normalize to 5-tuple from inner env
         if len(step) == 5:
             obs, reward_env, terminated, truncated, info = step
             done = bool(terminated or truncated)
@@ -74,17 +69,15 @@ class ResetStateWrapper(gym.Wrapper):
             obs, reward_env, done, info = step
             terminated, truncated = done, False
 
-        # ---------------- read state ----------------
+        # -------- read state --------
         x          = info.get("x", 0)
         lives      = info.get("lives", 3)
-        screen_end = info.get("screen_x_end", 10_000)
         rings      = info.get("rings", 0)
         score      = info.get("score", 0)
+        screen_end = info.get("screen_x_end", 10_000)
 
         if self.prev_info is None:
-            self.prev_info = {
-                "x": 0, "lives": lives, "rings": rings, "score": score
-            }
+            self.prev_info = {"x": 0, "lives": lives, "rings": rings, "score": score}
 
         prev_x     = self.prev_info.get("x", 0)
         prev_life  = self.prev_info.get("lives", lives)
@@ -95,42 +88,38 @@ class ResetStateWrapper(gym.Wrapper):
         dr     = rings - prev_rings
         dscore = score - prev_score
 
-        # rolling avg of dx (for logging/diagnostics)
+        # smooth dx for logs
         self.dx_window.pop(0)
         self.dx_window.append(float(dx))
         dx_avg = sum(self.dx_window) / len(self.dx_window)
 
-        # ---------------- boss detection ----------------
-        # Heuristic: near the end AND scrolling has stalled for a bit
-        near_end = (max(self.x_best, x) >= 0.90 * float(screen_end))
-        scroll_stalled = (self.no_progress_steps > 180)  # ~3s w/ skip=2
-
-        if (near_end and scroll_stalled) or self.in_boss:
+        # -------- boss detection (stricter) --------
+        # Enter boss only when near end AND scroll stalled for a while.
+        near_end = (screen_end > 0) and (max(self.x_best, x) >= 0.97 * float(screen_end))
+        scroll_stalled = (self.no_progress_steps > 240) and (abs(dx) <= 1)  # ~4s
+        if not self.in_boss and near_end and scroll_stalled:
             self.in_boss = True
-        else:
-            self.in_boss = False
+        # once in boss, stay until episode ends (no auto-exit)
 
-        # ---------------- reward shaping ----------------
+        # -------- reward shaping --------
         R = 0.0
 
-        # (A) NEW PROGRESS: only pay when beating best x (disabled in boss)
+        # (A) progress/new-best (disabled in boss)
         if not self.in_boss:
             new_progress = max(0, x - self.x_best)
             if new_progress > 0:
-                R += 2.0 * (new_progress / 5.0)  # big progress pay
+                R += 2.0 * (new_progress / 5.0)
                 self.x_best = x
                 self.no_progress_steps = 0
             else:
                 self.no_progress_steps += 1
         else:
-            # In boss: no progress signal (camera is locked)
-            self.no_progress_steps += 1  # still track for diagnostics
+            self.no_progress_steps += 1  # still track for info
 
-        # (B) SPEED / MOTION
+        # (B) movement/speed
         if not self.in_boss:
             if dx > 0:
-                dx_c = _cap(dx, 0, 12)
-                R += 0.4 * dx_c
+                R += 0.4 * _cap(dx, 0, 12)
                 self.right_streak += 1
             elif dx == 0:
                 R -= 0.6
@@ -139,28 +128,25 @@ class ResetStateWrapper(gym.Wrapper):
                 R -= 3.0
                 self.right_streak = 0
 
-            # streak every 20 forward steps
             if self.right_streak > 0 and self.right_streak % 20 == 0:
                 R += 8.0
 
-            # burst bonus: new record step speed
             if dx > self.best_dx and dx > 4:
                 R += 5.0 + 0.5 * _cap(dx - self.best_dx, 0, 8)
                 self.best_dx = dx
         else:
-            # In boss: de-emphasize dx; allow free dodging
             if dx > 0:
-                R += 0.1 * _cap(dx, 0, 8)  # small rightward nudge
-            # No idle/backtrack penalties in boss
+                R += 0.1 * _cap(dx, 0, 8)  # small nudge
+            # no idle/backtrack penalty in boss
 
-        # (C) LIGHT TIME PRESSURE (always on)
+        # (C) light time pressure (always)
         R -= 0.02
 
-        # (D) JUMP SHAPING
+        # (D) jump shaping (mild)
         buttons = getattr(self.env.unwrapped, "buttons", [])
         jump_buttons = {"A", "B", "C"}
 
-        # Map discrete action -> button array if needed
+        # map discrete index to button array if needed
         if hasattr(self.env, "action") and isinstance(action, (int, np.integer)):
             try:
                 action_array = self.env.action(action)
@@ -175,38 +161,33 @@ class ResetStateWrapper(gym.Wrapper):
 
         if not self.in_boss:
             if is_jump and dx <= 0:
-                R -= 2.0
+                R -= 1.5
             elif is_jump and dx > 0:
-                R += 0.5
-        else:
-            # In boss: neutral on jumps unless they cause score gain (handled below)
-            pass
+                R += 0.4
 
-                # (E) RINGS — collect good, lose bad (balanced)
+        # (E) rings — balanced
         if dr > 0:
-            R += 1.0 * dr          # +1 per ring gained
-            if dr >= 10:           # bonus for big pickups
+            R += 1.0 * dr
+            if dr >= 10:
                 R += 10.0
         elif dr < 0:
-            R -= 2.0 * abs(dr)     # penalty for losing rings
+            R -= 2.0 * abs(dr)
 
-
-        # (F) BOSS SCORE REWARD
+        # (F) boss score reward
         if self.in_boss and dscore > 0:
-            # Boss hits usually add +1000; scale generously
-            R += 0.1 * dscore          # +100 per +1000 score
+            R += 0.05 * dscore      # +50 per +1000 score
             if dscore >= 1000:
-                R += 150.0            # clear confirmation burst
+                R += 80.0           # clear hit bonus
 
-        # (G) STUCK penalties / early reset (disabled in boss)
+        # (G) stuck penalties (disabled in boss)
         if not self.in_boss:
             if self.no_progress_steps and self.no_progress_steps % 120 == 0:
-                R -= 4.0
+                R -= 3.0
             if self.no_progress_steps > 360:
                 done = True
                 truncated = True
 
-        # (H) Terminal events
+        # (H) terminal events
         if lives < prev_life:
             R -= 40.0
             done = True
@@ -216,32 +197,14 @@ class ResetStateWrapper(gym.Wrapper):
             done = True
             terminated = True
 
-        # (I) Episode step cap
+        # step cap
         self.steps += 1
         if self.steps > self.max_steps:
             done = True
             truncated = True
 
-        # ---------------- logging ----------------
-        self.episode_records.append({
-            "step": self.steps,
-            "action": int(action) if isinstance(action, (int, np.integer)) else -1,
-            "is_jump": bool(is_jump),
-            "x": int(x),
-            "dx": int(dx),
-            "dx_avg": float(dx_avg),
-            "x_best": int(self.x_best),
-            "rings": int(rings),
-            "dr": int(dr),
-            "score": int(score),
-            "dscore": int(dscore),
-            "streak": int(self.right_streak),
-            "in_boss": bool(self.in_boss),
-            "reward": float(round(R, 4)),
-        })
-
-        # update previous info for next step
+        # update prev
         self.prev_info = info
 
-        # always return shaped reward (ignore env's raw reward)
+        # return shaped reward
         return obs, float(R), bool(terminated), bool(truncated), info
