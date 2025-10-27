@@ -84,7 +84,7 @@ def main():
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # ---- Env ----
-    env = make_env(render='rgb_array', record_video=True)
+    env = make_env(render='rgb_array', record_video=False)
 
     out = env.reset()
     obs0, info = out if isinstance(out, tuple) else (out, {})
