@@ -7,11 +7,11 @@ import gymnasium as gym
 from gymnasium.wrappers import AtariPreprocessing
 import os
 
-model_path = "dqn_breakout_model.h5"
+model_path = "Breakout/dqn_breakout_model.h5"
 # Reward Shaping Constants
 # We amplify the standard environment reward and heavily penalize life loss.
-SCORE_MULTIPLIER = 4.0        # Amplifies the reward received for breaking bricks (was PADDLE_HIT_REWARD = 1)
-LIFE_LOSS_PENALTY = -7.0      # Increased penalty for losing a life (was -5.0)
+SCORE_MULTIPLIER = 4.0        # Amplifies the reward received for breaking bricks 
+LIFE_LOSS_PENALTY = -7.0      # Increased penalty for losing a life
 TIME_STEP_PENALTY = -0.001    # Small penalty per step to encourage faster play
 
 # --- Hyperparameters ---
@@ -70,8 +70,10 @@ else:
     model_target.set_weights(model.get_weights())
 
 # Initialize environment
-# FIX: Changed render_mode to "human" to display the game window.
-env = gym.make("ALE/Breakout-v5", render_mode="human", frameskip=1)
+# # FIX: Changed render_mode to "human" to display the game window.
+# env = gym.make("ALE/Breakout-v5", render_mode="human", frameskip=1)
+# FIX: Changed render_mode to "rgb_array" to train on gcloud
+env = gym.make("ALE/Breakout-v5", render_mode="rgb_array", frameskip=1)
 env = AtariPreprocessing(env, frame_skip=4, grayscale_obs=True, scale_obs=True)
 
 # --- Training loop ---
