@@ -93,7 +93,7 @@ def main():
     extra, prev_sx = build_extra(info, prev_sx)
 
     # --- net / agent ---
-    net = Net(obs_shape=(1, IMG_SIZE, IMG_SIZE), num_actions=5, extra_state_dim=4).to(DEVICE)
+    net = Net(obs_shape=(1, IMG_SIZE, IMG_SIZE), num_actions=4, extra_state_dim=4).to(DEVICE)
 
     optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)  # warm start; you can raise later
     agent = PPOAgent(net, optimizer, clip_range=0.2, grad_clip=0.5, entropy_coef=0.02)
@@ -117,7 +117,7 @@ def main():
     ep_return, ep_steps = 0.0, 0
     ep = 0
 
-    print(f"✅ Training starts | obs_shape={obs.shape} | actions=5")
+    print(f"✅ Training starts | obs_shape={obs.shape} | actions=4")
 
     for update in range(total_updates):
         # rollout storage
