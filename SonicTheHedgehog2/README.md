@@ -1,46 +1,15 @@
-# Sonic the Hedgehog 2 RL Agent
+🚀 Add full PPO training loop with entropy scheduling and checkpoint auto-resume
 
-## Overview
-Training a PPO agent to play Sonic 2 (Emerald Hill Zone Act 1)
+- Implemented full PPO update (policy, value, entropy losses) with GAE advantage computation.
+- Added clipped policy and value loss (standard PPO objective).
+- Introduced entropy coefficient schedule (0.05 → 0.01 over 200k steps) to improve exploration early on.
+- Normalized advantages and applied gradient clipping for stability.
+- Fixed env.reset() logic to avoid double resets and ensure info handling.
+- Improved checkpointing:
+  - Auto-loads latest checkpoint (sonic_ppo_latest.pt or highest *_k.pt)
+  - Saves both incremental and "latest" model snapshots
+- Added progress heartbeat logs every 200 steps for long training runs.
+- Made RecordVideo trigger only on save intervals to avoid performance slowdown.
+- Compatible with both new and old Gym/Gymnasium step APIs.
+- Now the model *actually learns* instead of only collecting rollouts.
 
-## Quick Start
-1. Install: `pip install retro torch gymnasium opencv-python pandas`
-2. Train: `python scripts/train.py`
-3. Test: `python scripts/test.py`
-
-## Architecture
-- **Algorithm**: PPO (Proximal Policy Optimization)
-- **Network**: CNN encoder + Actor-Critic heads
-- **Observations**: 84x84 grayscale, 4-frame stack
-- **Actions**: 10 discrete (RIGHT, RIGHT+JUMP, etc.)
-
-## Reward Shaping
-- Forward progress: +0.1 per 100 pixels
-- Ring loss: -0.3
-- Life loss: -1.0
-- Level completion: +1.0
-- Idle penalty: -0.01
-- Jump spam penalty: -0.1
-
-
-
-
-note i want to make it like this
-sonic-rl-project/
-├── README.md                 # Project overview
-├── requirements.txt          # Dependencies
-├── configs/
-│   └── config.py
-├── src/
-│   ├── agent.py
-│   ├── network.py
-│   ├── environment.py
-│   ├── discretizer.py
-│   ├── wrappers/
-│   │   ├── resetstate.py
-│   │   └── utils.py
-├── scripts/
-│   ├── train.py
-│   └── test.py
-├── checkpoints/              # Saved models
-└── logs/                     # Episode logs

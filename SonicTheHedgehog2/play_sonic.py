@@ -29,7 +29,7 @@ def extra_from_info(info):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="checkpoints/sonic_ppo_350k.pt")
+    ap.add_argument("--model", default="checkpoints/sonic_ppo_600k.pt")
     ap.add_argument("--episodes", type=int, default=3)
     ap.add_argument("--record", action="store_true",
                     help="save mp4 videos to ./videos_play/")

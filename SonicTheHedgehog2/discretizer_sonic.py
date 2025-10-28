@@ -5,7 +5,7 @@ import numpy as np
 class Discretizer(gym.ActionWrapper):
     """
     Converts multi-binary Sonic controls into a discrete action space.
-    Example: RIGHT, RIGHT+A, LEFT, JUMP, etc.
+    Example: RIGHT, RIGHT+B (jump), spindash, etc.
     """
     def __init__(self, env, combos):
         super().__init__(env)
@@ -22,38 +22,24 @@ class Discretizer(gym.ActionWrapper):
 
         self.action_space = gym.spaces.Discrete(len(self._decode_discrete_action))
 
-    def action(self, act):
-
-        ra_ =np.random.randint(100)
-
-        if ra_ < 15:
-            return self._decode_discrete_action[2].copy()
-
-
-
-
+    def action(self, act: int):
+        # IMPORTANT: do NOT override the chosen action
+        # (This used to randomly force RIGHT+jump and caused jump-spam.)
         return self._decode_discrete_action[act].copy()
 
 
 class SonicDiscretizer(Discretizer):
     """
-    Predefined Sonic-specific discrete actions.
+    Small, go-right-first action set.
+    You can expand it later (e.g., add LEFT) once forward motion is learned.
     """
     def __init__(self, env):
         combos = [
-            [],                 # 0: No-op
-            ['RIGHT'],          # 1
-            ['RIGHT','A'],      # 2
-            ['RIGHT','B'],      # 3
-            ['LEFT'],           # 4
-            ['LEFT','A'],       # 5
-            ['DOWN'],           # 6
-            ['UP'],             # 7
-            ['A'],              # 8
-            ['B'],              # 9
-         # --- add these for momentum / walls ---
-    ['DOWN','B'],           # 10: spin-dash charge
-    ['RIGHT','DOWN','B'],   # 11: spin-dash + hold right (release burst)
-    ['RIGHT','DOWN'],       # 12: hold crouch facing right (helps transitions)
-]
+            [],                    # 0: no-op (rare)
+            ['RIGHT'],             # 1: run right
+            ['RIGHT', 'B'],        # 2: run + jump
+            ['B'],                 # 3: neutral jump (occasional)
+            ['DOWN', 'B'],         # 4: spindash charge
+            ['RIGHT', 'DOWN', 'B'] # 5: spindash burst while holding RIGHT
+        ]
         super().__init__(env, combos)
