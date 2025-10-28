@@ -43,12 +43,12 @@ class AtariNet(nn.Module):
 
         return output
 
-    def save_model(self, weights_filename='models/latest.pt'):
-        if not os.path.exists("models"):
-            os.makedirs("models")
+    def save_model(self, weights_filename='BreakoutGame/models/latest_breakout_model.pt'):
+        if not os.path.exists("BreakoutGame/models"):
+            os.makedirs("BreakoutGame/models")
         torch.save(self.state_dict(), weights_filename)
 
-    def load_model(self, weights_filenames='models/lates.pt'):
+    def load_model(self, weights_filenames='BreakoutGame/models/latest_breakout_model.pt'):
         try:
             self.load_state_dict(torch.load(weights_filenames))
             print(f"loaded weights at {weights_filenames}")

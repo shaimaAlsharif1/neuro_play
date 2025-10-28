@@ -109,8 +109,10 @@ class Agent:
             return np.random.randint(self.nb_actions)
         else:
             with torch.no_grad():
-                state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
-                q_values = self.model(state_t)
+                state_t = torch.as_tensor(state, dtype=torch.float32).to(self.device)
+                if state_t.ndim == 3:
+                    state_t = state_t.unsqueeze(0)
+                    q_values = self.model(state_t)
                 return int(torch.argmax(q_values, dim=1).item())
 
 
