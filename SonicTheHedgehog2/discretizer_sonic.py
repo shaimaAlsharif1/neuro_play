@@ -38,7 +38,6 @@ class SonicDiscretizer(Discretizer):
         combos = [
             ['RIGHT'],
             ['RIGHT', 'B'],
-            ['B'],
             ['DOWN', 'B'],
             ['RIGHT', 'DOWN', 'B'],
         ]
