@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import os
 
 class AtariNet(nn.Module):
     def __init__(self, nb_actions=4):
@@ -43,6 +44,8 @@ class AtariNet(nn.Module):
         return output
     
     def save_model(self, weights_filename='models/latest.pt'):
+        if not os.path.exists("models"):
+            os.makedirs("models")
         torch.save(self.state_dict(), weights_filename)
 
     def load_model(self, weights_filenames='models/lates.pt'):
