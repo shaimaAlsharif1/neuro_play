@@ -189,8 +189,11 @@ class Agent:
                 # plotter.update_plot(stats)
 
 
-            if epoch % 1000 == 0 :
-                self.model.save_model(f"models/model_iter_{epoch}.pt")
+            # if epoch % 1000 == 0 :
+            #     self.model.save_model(f"models/model_iter_{epoch}.pt")
+            if epoch % 1000 == 0:
+                self.model.save_model(f"BreakoutGame/models/model_iter_{epoch}.pt")
+
 
         return stats
 
