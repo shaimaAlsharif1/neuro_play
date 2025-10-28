@@ -5,9 +5,8 @@ Includes extra scalar features: lives, screen_x, screen_y, screen_x_end
 """
 
 import os
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ["SDL_VIDEODRIVER"] = "dummy"
 
-import glob
 import numpy as np
 import torch
 from torch.distributions import Categorical
@@ -23,7 +22,6 @@ from config_sonic import (
 # ---------------------------
 # Helpers
 # ---------------------------
-
 def to_chw(obs_np):
     """Convert env obs to CHW float32 tensor in [0,1]."""
     if obs_np.ndim == 2:
@@ -31,7 +29,6 @@ def to_chw(obs_np):
     elif obs_np.ndim == 3 and obs_np.shape[-1] == 1:
         chw = np.transpose(obs_np, (2, 0, 1))
     else:
-        # average RGB to grayscale channel then CHW
         chw = np.mean(obs_np, axis=-1, keepdims=True).transpose(2, 0, 1)
     return chw.astype(np.float32)
 
@@ -56,7 +53,7 @@ def minibatches(*arrays, batch_size=64, shuffle=True):
     if shuffle:
         np.random.shuffle(idx)
     for s in range(0, n, batch_size):
-        j = idx[s:s + batch_size]
+        j = idx[s:s+batch_size]
         yield [a[j] for a in arrays]
 
 def entropy_coef_schedule(total_steps_done):
@@ -67,7 +64,6 @@ def entropy_coef_schedule(total_steps_done):
 # ---------------------------
 # Training
 # ---------------------------
-
 def main():
     record_next_episode = False
     ckpt_dir = "checkpoints"
@@ -84,7 +80,7 @@ def main():
     net = ActorCriticCNNExtra(
         obs_shape=(obs_channels, IMG_SIZE, IMG_SIZE),
         num_actions=num_actions,
-        extra_state_dim=4  # lives, screen_x, screen_y, screen_x_end
+        extra_state_dim=4
     ).to(DEVICE)
     opt = torch.optim.Adam(net.parameters(), lr=LEARNING_RATE)
 
@@ -113,7 +109,6 @@ def main():
     # Main training loop
     # ---------------------------
     while global_steps < TOTAL_TIMESTEPS:
-        # Storage
         obs_buf, extra_buf, act_buf, logp_buf, rew_buf, val_buf, done_buf = [], [], [], [], [], [], []
 
         # -------- Rollout collection --------
@@ -135,13 +130,7 @@ def main():
                 logprob = dist.log_prob(action)
 
             a = int(action.item())
-            step_out = env.step(a)
-            # Ensure 5-tuple
-            if len(step_out) == 5:
-                next_obs, reward, terminated, truncated, info = step_out
-            else:
-                next_obs, reward, done, info = step_out
-                terminated, truncated = done, False
+            next_obs, reward, terminated, truncated, info = env.step(a)
             done = bool(terminated or truncated)
 
             # Store rollout data
@@ -157,10 +146,6 @@ def main():
             obs_chw = to_chw(next_obs)
             ep_return += reward
             global_steps += 1
-
-            # Heartbeat every ~200 env steps so the terminal never looks frozen
-            if (global_steps % 200) == 0:
-                print(f"… collecting rollout | steps={global_steps:,} | x={info.get('x',0)} | R_ep={ep_return:.1f}")
 
             if done:
                 episode += 1
@@ -267,5 +252,4 @@ def main():
     print("✅ Training finished")
 
 if __name__ == "__main__":
-
     main()
