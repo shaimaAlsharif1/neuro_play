@@ -1,11 +1,9 @@
-# discretizer_sonic.py
 import gymnasium as gym
 import numpy as np
 
 class Discretizer(gym.ActionWrapper):
     """
-    Converts multi-binary Sonic controls into a discrete action space.
-    Example: RIGHT, RIGHT+B (jump), spindash, etc.
+    Converts MultiBinary controller into a compact Discrete action space.
     """
     def __init__(self, env, combos):
         super().__init__(env)
@@ -16,30 +14,32 @@ class Discretizer(gym.ActionWrapper):
 
         for combo in combos:
             arr = np.array([False] * env.action_space.n)
-            for button in combo:
-                arr[buttons.index(button)] = True
+            for b in combo:
+                arr[buttons.index(b)] = True
             self._decode_discrete_action.append(arr)
 
         self.action_space = gym.spaces.Discrete(len(self._decode_discrete_action))
 
     def action(self, act: int):
-        # IMPORTANT: do NOT override the chosen action
-        # (This used to randomly force RIGHT+jump and caused jump-spam.)
+        # Return exactly the combo specified for this discrete index.
         return self._decode_discrete_action[act].copy()
 
 
 class SonicDiscretizer(Discretizer):
     """
-    Small, go-right-first action set.
-    You can expand it later (e.g., add LEFT) once forward motion is learned.
+    5-action, go-right-first set (NO NO-OP to avoid idle collapse).
+      0: ['RIGHT']              - run right
+      1: ['RIGHT','B']          - run + jump
+      2: ['B']                  - neutral jump
+      3: ['DOWN','B']           - spindash charge
+      4: ['RIGHT','DOWN','B']   - spindash burst while holding RIGHT
     """
     def __init__(self, env):
         combos = [
-            [],                    # 0: no-op (rare)
-            ['RIGHT'],             # 1: run right
-            ['RIGHT', 'B'],        # 2: run + jump
-            ['B'],                 # 3: neutral jump (occasional)
-            ['DOWN', 'B'],         # 4: spindash charge
-            ['RIGHT', 'DOWN', 'B'] # 5: spindash burst while holding RIGHT
+            ['RIGHT'],
+            ['RIGHT', 'B'],
+            ['B'],
+            ['DOWN', 'B'],
+            ['RIGHT', 'DOWN', 'B'],
         ]
         super().__init__(env, combos)
