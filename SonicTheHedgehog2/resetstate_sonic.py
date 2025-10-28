@@ -1,4 +1,3 @@
-# resetstate_sonic.py
 import gymnasium as gym
 import numpy as np
 from collections import deque
@@ -7,17 +6,21 @@ class ResetStateWrapper(gym.Wrapper):
     """
     Sonic-2 reward shaping with wall-aware behavior and speed incentive.
 
+    Focus: Increased penalty for stagnation/pogoing at walls and heavily
+    increased reward for successful spindash/burst maneuvers to encourage
+    efficient obstacle clearing.
+
     - Contest-style progress (primary).
     - dx/explore/flow shaping (secondary).
     - No global jump penalty; contextual shaping at walls.
     - Launch/spring bonus from vertical spikes (|dy|).
     - WALL LOGIC: when near a wall or stuck while pressing RIGHT:
-        * penalize jumps,
-        * reward spindash charge (DOWN+B, no RIGHT) per frame,
-        * big bonus on burst (RIGHT with NO DOWN),
-        * amplify forward speed briefly after burst.
+        * SEVERELY penalize jumps (-100.0).
+        * REWARD spindash charge (DOWN+B, no RIGHT) per frame (8.0).
+        * BIG bonus on burst (RIGHT with NO DOWN) (400.0).
+        * Amplify forward speed briefly after burst (30.0).
     - SPEED INCENTIVE: if not near a wall, reward horizontal speed.
-    - Early termination on stagnation.
+    - Early termination on stagnation (180 steps).
     """
 
     # ====== Primary ======
@@ -39,30 +42,37 @@ class ResetStateWrapper(gym.Wrapper):
     RING_DEFICIT      = -5.0
     SCORE_DELTA       = 10.0
 
-    # ====== Anti-stall / heuristics ======
-    IDLE_PENALTY            = -0.2
-    BACKWARD_PENALTY_PER_PX = -2.0
-    JUMP_TOL_COUNT          = 2
-    JUMP_TOL_PERIOD         = 10
-    START_JUMP_COOLDOWN     = 90
-    STUCK_JUMP_NUDGE_AT     = 90
+    # ====== Anti-stall / heuristics (ADJUSTED) ======
+    # Increased penalty for no movement
+    IDLE_PENALTY              = -1.0
+    # Increased penalty for moving backward
+    BACKWARD_PENALTY_PER_PX   = -5.0
+    JUMP_TOL_COUNT            = 2
+    JUMP_TOL_PERIOD           = 10
+    START_JUMP_COOLDOWN       = 90
+    STUCK_JUMP_NUDGE_AT       = 90
 
-    # ====== Stagnation cutoff ======
-    DEFAULT_STAGNATION_CUTOFF = 240
+    # ====== Stagnation cutoff (ADJUSTED) ======
+    # Quicker termination on stagnation
+    DEFAULT_STAGNATION_CUTOFF = 180
     DEFAULT_MAX_STEPS         = 4500
 
-    # ====== Spindash & wall-behavior ======
-    SPINDASH_WINDOW      = 30        # frames to go from charge to burst
-    SPINDASH_BONUS       = 50.0      # your chosen strong bonus
-    CHARGE_HOLD_REWARD   = 2.0       # your chosen per-frame charge reward
-    WALL_JUMP_PENALTY    = -20.0
-    BURST_TIMER_FRAMES   = 10
-    BURST_SPEED_SCALE    = 8.0
-    NEAR_WALL_PIXELS     = 100
+    # ====== Spindash & wall-behavior (ADJUSTED) ======
+    SPINDASH_WINDOW    = 30      # frames to go from charge to burst
+    # Huge bonus for successful burst
+    SPINDASH_BONUS     = 400.0
+    # Stronger per-frame charge reward
+    CHARGE_HOLD_REWARD = 8.0
+    # Severely penalize wall-jumping
+    WALL_JUMP_PENALTY  = -100.0
+    BURST_TIMER_FRAMES = 10
+    # Stronger speed scaling post-burst
+    BURST_SPEED_SCALE  = 30.0
+    NEAR_WALL_PIXELS   = 100
 
     # ====== Speed-run incentive (when not near wall) ======
     SPEED_DX_CAP      = 8
-    SPEED_BONUS_SCALE = 40.0          # your chosen strong speed bonus
+    SPEED_BONUS_SCALE = 40.0      # your chosen strong speed bonus
 
     def __init__(self, env, max_steps=None, stagnation_cutoff=None):
         super().__init__(env)
@@ -98,11 +108,13 @@ class ResetStateWrapper(gym.Wrapper):
 
     def reset(self, **kwargs):
         result = self.env.reset(**kwargs)
+        # Handle tuple return for compatibility (gymnasium vs gym)
         obs, info = result if isinstance(result, tuple) else (result, {})
 
         self.steps = 0
         self.frame_counter = 0
 
+        # Safely extract initial state values
         self.prev_sx = int(info.get("screen_x", info.get("x", 0)))
         self.best_x = self.prev_sx
         self.prev_progress = 0.0
@@ -123,7 +135,7 @@ class ResetStateWrapper(gym.Wrapper):
         return obs, info
 
     def step(self, action):
-        # Env step (supports 5-tuple or 4-tuple)
+        # Env step (supports 5-tuple (gymnasium) or 4-tuple (gym.make))
         result = self.env.step(action)
         if len(result) == 5:
             obs, base_rew, terminated, truncated, info = result
@@ -136,6 +148,7 @@ class ResetStateWrapper(gym.Wrapper):
 
         # Extract info safely
         sx = int(info.get("screen_x", info.get("x", 0)))
+        # Use a high number if end_x is missing or zero, to avoid division by zero later
         end_x = max(int(info.get("screen_x_end", 0)), 10_000)
         rings = int(info.get("rings", self.prev_rings))
         score = int(info.get("score", self.prev_score))
@@ -161,11 +174,13 @@ class ResetStateWrapper(gym.Wrapper):
             self.stuck_steps += 1
 
         self.flow_dx.append(max(dx, 0))
+        # Calculate average forward movement
         avg_dx = sum(self.flow_dx) / max(len(self.flow_dx), 1)
         custom += self.FLOW_SCALE * avg_dx
 
         # Finish / life
         if sx >= end_x:
+            # Time bonus scales inverse with time spent
             t = np.clip(self.frame_counter / 18000.0, 0.0, 1.0)
             custom += self.FINISH_BONUS + (1.0 - t) * self.TIME_FINISH_BONUS
             done = True
@@ -175,6 +190,7 @@ class ResetStateWrapper(gym.Wrapper):
             custom += self.LIFE_GAIN * (lives - self.prev_lives)
         elif lives < self.prev_lives:
             custom += self.LIFE_LOSS * (self.prev_lives - lives)
+            # If a life is lost, terminate the episode
             done = True
             terminated = True
 
@@ -188,7 +204,7 @@ class ResetStateWrapper(gym.Wrapper):
             custom += self.RING_DEFICIT
         custom += self.SCORE_DELTA * (score - self.prev_score)
 
-        # Idle / backward shaping
+        # Idle / backward shaping (Increased Penalty)
         if dx == 0:
             custom += self.IDLE_PENALTY
         elif dx < 0:
@@ -197,8 +213,9 @@ class ResetStateWrapper(gym.Wrapper):
         # Decode current pressed buttons
         buttons = getattr(self.env.unwrapped, "buttons", [])
         if hasattr(self.env, "action") and isinstance(action, (int, np.integer)):
+            # Convert discrete action index to MultiBinary array
             try:
-                act_arr = self.env.action(action)  # Discrete -> MultiBinary
+                act_arr = self.env.action(action)
             except Exception:
                 act_arr = np.zeros(len(buttons), dtype=np.int8)
         else:
@@ -225,40 +242,40 @@ class ResetStateWrapper(gym.Wrapper):
             while self.jump_history and self.jump_history[0] + self.JUMP_TOL_PERIOD <= self.frame_counter:
                 self.jump_history.popleft()
 
-        # Launch/spring bonus
+        # Launch/spring bonus (for vertical movement)
         if abs(dy) >= 6 and dx >= 0:
             custom += 10.0
 
         # ---------- WALL / STUCK DETECTION ----------
         distance_to_wall = end_x - sx if end_x > 0 else None
         near_wall_dist = (distance_to_wall is not None and distance_to_wall < self.NEAR_WALL_PIXELS)
-        # strong stuck signal: long stall + low average forward speed while holding RIGHT
+        # Strong stuck signal: long stall + low average forward speed while holding RIGHT
         avg_dx15 = sum(list(self.flow_dx)[-15:]) / max(1, min(15, len(self.flow_dx)))
         stuck_signal = (self.stuck_steps > 60 and avg_dx15 <= 0.2 and right)
         near_wall = stuck_signal or (near_wall_dist and right)
 
         # Spindash sequence detection
-        charging = down_b and not right                         # DOWN+B with NO RIGHT
-        burst_ok = right and ('DOWN' not in pressed) and (self.spindash_arming > 0)  # RIGHT with NO DOWN
+        charging = down_b and not right                               # DOWN+B with NO RIGHT
+        burst_ok = right and ('DOWN' not in pressed) and (self.spindash_arming > 0) # RIGHT with NO DOWN
 
         if near_wall:
-            # discourage pogo at the wall
+            # Severely discourage pogo at the wall
             if jumped:
                 custom += self.WALL_JUMP_PENALTY
 
-            if self.stuck_steps > 90:
-                # charge (hold)
-                if charging:
-                    if self.spindash_arming == 0:
-                        self.spindash_arming = self.SPINDASH_WINDOW  # NOTE: keep next line; this fixes the typo
-                        self.spindash_arming = self.SPINDASH_WINDOW   # correct name
-                    self.charge_hold += 1
-                    custom += self.CHARGE_HOLD_REWARD
-                # burst (release)
-                elif burst_ok:
-                    custom += self.SPINDASH_BONUS
-                    self.spindash_arming = 0
-                    self.burst_timer = self.BURST_TIMER_FRAMES
+            # --- Spindash Charge and Burst (Stuck_steps check REMOVED for proactivity) ---
+            # charge (hold)
+            if charging:
+                if self.spindash_arming == 0:
+                    self.spindash_arming = self.SPINDASH_WINDOW
+                self.charge_hold += 1
+                custom += self.CHARGE_HOLD_REWARD
+            # burst (release)
+            elif burst_ok:
+                custom += self.SPINDASH_BONUS
+                self.spindash_arming = 0
+                self.burst_timer = self.BURST_TIMER_FRAMES
+            # ----------------------------------------------------------------------------
         else:
             # not near wall: reward steady speed to the right
             if dx > 0:
@@ -272,7 +289,7 @@ class ResetStateWrapper(gym.Wrapper):
         if self.spindash_arming > 0:
             self.spindash_arming -= 1
 
-        # post-burst momentum window
+        # post-burst momentum window (Increased Scale)
         if self.burst_timer > 0:
             if dx > 0:
                 custom += self.BURST_SPEED_SCALE * dx
@@ -286,7 +303,7 @@ class ResetStateWrapper(gym.Wrapper):
         self.prev_score = score
         self.prev_lives = lives
 
-        # Early termination on stagnation / max steps
+        # Early termination on stagnation / max steps (Quicker Cutoff)
         if self.stuck_steps >= self.STAGNATION_CUTOFF:
             done = True
             terminated = True
