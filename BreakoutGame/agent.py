@@ -134,7 +134,7 @@ class Agent:
 
                 if self.memory.can_sample(self.batch_size):
                     state_b, action_b, reward_b,  done_b, next_state_b = self.memory.sample(self.batch_size)
-                    action_b = action_b.long()
+                    action_b = action_b.long().unsqueeze(1)
                     qsa_b = self.model(state_b).gather(1, action_b)
                     next_qsa_b = self.target_model(next_state_b)
                     next_qsa_b = torch.max(next_qsa_b, dim=-1, keepdim=True)[0]
