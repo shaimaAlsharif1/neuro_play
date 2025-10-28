@@ -22,11 +22,11 @@ CHECKPOINT_FREQUENCY = 100 # Save a checkpoint every 50 episodes
 batch_size = 32
 gamma = 0.99
 epsilon = 1.0
-epsilon_min = 0.1
+epsilon_min = 0.05
 epsilon_decay_frames = 250000.0
 num_actions = 4
 max_steps_per_episode = 10000
-max_episodes = 1000
+max_episodes = 10000
 
 # Optimizer and loss
 optimizer = keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
