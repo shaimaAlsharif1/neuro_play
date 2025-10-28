@@ -1,10 +1,11 @@
-# environment_sonic.py
 """
 Complete environment builder for Sonic 2 (Genesis)
-Includes preprocessing, action discretization, reward shaping, and wrappers.
+Includes preprocessing, action discretization, reward shaping, wrappers, and optional video recording.
 """
 
+import os
 import retro
+from gymnasium.wrappers import RecordVideo
 from config_sonic import (
     GAME_ID,
     STATE,
@@ -28,7 +29,7 @@ class SonicEnv:
             game=GAME_ID,
             state=STATE,
             use_restricted_actions=retro.Actions.ALL,
-            render_mode="human" if render else None,
+            render_mode="rgb_array"
         )
 
         try:
@@ -68,9 +69,15 @@ class SonicEnv:
         self.env.close()
 
 
-def make_env(render=False):
+def make_env(render=True, record_video=False, video_dir="videos", episode_trigger=lambda e: True):
     """
-    Builds the full Sonic environment pipeline with preprocessing and reward shaping.
+    Builds the full Sonic environment pipeline with preprocessing, reward shaping, and optional video recording.
+
+    Args:
+        render (bool): whether to render environment.
+        record_video (bool): whether to record videos.
+        video_dir (str): folder to save videos.
+        episode_trigger (callable): function taking episode index and returning True if video should be recorded.
 
     Returns:
         gym.Env: fully wrapped environment ready for training
@@ -91,5 +98,15 @@ def make_env(render=False):
 
     # ---- Normalize pixels to [0,1] ----
     env = NormalizeObs(env)
+
+    # ---- Optional video recording ----
+    if record_video:
+        os.makedirs(video_dir, exist_ok=True)
+        env = RecordVideo(
+            env,
+            video_folder=video_dir,
+            episode_trigger=episode_trigger,
+            name_prefix="sonic_ep"
+        )
 
     return env

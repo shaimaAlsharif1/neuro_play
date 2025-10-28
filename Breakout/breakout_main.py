@@ -217,7 +217,7 @@ while episode_count < max_episodes:
 
         # Store the number of lives BEFORE the step
         # This requires accessing the ALE object via unwrapped
-        lives_before = env.unwrapped.ale.lives() 
+        lives_before = env.unwrapped.ale.lives()
 
         # --- Apply action ---
         state_next, reward, done, _, info = env.step(action) # reward is the standard score change
@@ -225,7 +225,7 @@ while episode_count < max_episodes:
         state_next_stacked = np.stack(frame_stack, axis=-1)  # (84, 84, 4)
 
         # *** REWARD SHAPING LOGIC ***
-        lives_after = env.unwrapped.ale.lives() 
+        lives_after = env.unwrapped.ale.lives()
 
         # 1. Amplify Standard Score Reward
         reward *= SCORE_MULTIPLIER
@@ -239,18 +239,18 @@ while episode_count < max_episodes:
         # 3. Life Loss Penalty: Explicitly punish losing a life
         if lives_after < lives_before:
             # Modify the reward with the large negative value
-            reward += LIFE_LOSS_PENALTY 
+            reward += LIFE_LOSS_PENALTY
             print(f"Lives lost! Applying penalty: {LIFE_LOSS_PENALTY}")
 
         # Accumulate the SHAPED reward for episode tracking
-        episode_reward += reward 
+        episode_reward += reward
 
         # --- Store in replay buffer ---
         action_history.append(action)
         state_history.append(state)
         state_next_history.append(state_next_stacked)
         # Store the SHAPED reward
-        rewards_history.append(reward) 
+        rewards_history.append(reward)
         done_history.append(done)
         state = state_next_stacked
 
@@ -299,6 +299,8 @@ while episode_count < max_episodes:
         del episode_reward_history[0]
     running_reward = np.mean(episode_reward_history)
     episode_count += 1
+
+
 
     # --- CHECKPOINTING ---
     if episode_count % CHECKPOINT_FREQUENCY == 0:
