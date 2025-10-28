@@ -266,7 +266,7 @@ def main():
 
         # --------- Save checkpoint ---------
         if (global_steps // SAVE_FREQ) != ((global_steps - rollout_steps) // SAVE_FREQ):
-            ckpt = os.path.join(ckpt_dir, f"sonic_ppo_{global_steps // 1000}k.pt")
+            ckpt = os.path.join(ckpt_dir, f"sonic_ppo_{global_steps // SAVE_FREQ}k.pt")
             torch.save({"model": net.state_dict(), "steps": global_steps}, ckpt)
             torch.save({"model": net.state_dict(), "steps": global_steps},
                        os.path.join(ckpt_dir, "sonic_ppo_latest.pt"))
