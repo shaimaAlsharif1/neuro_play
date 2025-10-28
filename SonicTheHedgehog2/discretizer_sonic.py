@@ -24,21 +24,19 @@ class Discretizer(gym.ActionWrapper):
         # Return exactly the combo specified for this discrete index.
         return self._decode_discrete_action[act].copy()
 
-
 class SonicDiscretizer(Discretizer):
     """
-    5-action, go-right-first set (NO NO-OP to avoid idle collapse).
-      0: ['RIGHT']              - run right
-      1: ['RIGHT','B']          - run + jump
-      2: ['B']                  - neutral jump
-      3: ['DOWN','B']           - spindash charge
-      4: ['RIGHT','DOWN','B']   - spindash burst while holding RIGHT
+    Compact 4-action Sonic controller with working spindash.
+      0: ['RIGHT']          - run / burst
+      1: ['RIGHT','B']      - run + jump
+      2: ['DOWN','B']       - spindash charge
+      3: ['DOWN']           - crouch / stay charging
     """
     def __init__(self, env):
         combos = [
             ['RIGHT'],
             ['RIGHT', 'B'],
             ['DOWN', 'B'],
-            ['RIGHT', 'DOWN', 'B'],
+            ['DOWN'],
         ]
         super().__init__(env, combos)
