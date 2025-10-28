@@ -171,7 +171,7 @@ def main():
         # --- Save checkpoint if needed ---
         if global_steps // SAVE_FREQ != (global_steps - rollout_steps) // SAVE_FREQ:
             os.makedirs("checkpoints", exist_ok=True)
-            ckpt = f"checkpoints/sonic_ppo_{global_steps // 1000}k.pt"
+            ckpt = f"checkpoints/sonic_ppo_{global_steps // SAVE_FREQ}k.pt"
             torch.save({
                 "model": net.state_dict(),
                 "steps": global_steps,
