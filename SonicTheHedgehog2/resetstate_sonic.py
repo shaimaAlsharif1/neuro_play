@@ -4,30 +4,20 @@ from collections import deque
 
 class ResetStateWrapper(gym.Wrapper):
     """
-    Sonic-2 reward shaping with wall-aware behavior and speed incentive.
+    Sonic-2 reward shaping with aggressive wall-aware behavior and speed incentive.
 
-    Focus: Increased penalty for stagnation/pogoing at walls and heavily
-    increased reward for successful spindash/burst maneuvers to encourage
-    efficient obstacle clearing.
-
-    - Contest-style progress (primary).
-    - dx/explore/flow shaping (secondary).
-    - No global jump penalty; contextual shaping at walls.
-    - Launch/spring bonus from vertical spikes (|dy|).
-    - WALL LOGIC: when near a wall or stuck while pressing RIGHT:
-        * SEVERELY penalize jumps (-100.0).
-        * REWARD spindash charge (DOWN+B, no RIGHT) per frame (8.0).
-        * BIG bonus on burst (RIGHT with NO DOWN) (400.0).
-        * Amplify forward speed briefly after burst (30.0).
-    - SPEED INCENTIVE: if not near a wall, reward horizontal speed.
-    - Early termination on stagnation (180 steps).
+    FOCUS: Extreme separation of unproductive (pogoing) and productive (spindash)
+    behavior at walls. Penalizes wall jumping by -100.0, and rewards
+    successful spindash burst with a primary 400.0 bonus and secondary
+    100.0x speed multiplier.
     """
 
     # ====== Primary ======
     K_CONTEST = 9000.0  # Δ(screen_x/end_x)
 
     # ====== Secondary ======
-    K_DX        = 50.0  # per-pixel forward (your chosen value)
+    # K_DX is now applied only when NOT near a wall (see step method)
+    K_DX        = 50.0
     K_EXPLORE   = 5.0   # new-farthest pixels
     FLOW_WINDOW = 30
     FLOW_SCALE  = 1.0
@@ -43,36 +33,32 @@ class ResetStateWrapper(gym.Wrapper):
     SCORE_DELTA       = 10.0
 
     # ====== Anti-stall / heuristics (ADJUSTED) ======
-    # Increased penalty for no movement
-    IDLE_PENALTY              = -1.0
-    # Increased penalty for moving backward
-    BACKWARD_PENALTY_PER_PX   = -5.0
+    IDLE_PENALTY              = -2.0  # Even higher penalty for no movement
+    BACKWARD_PENALTY_PER_PX   = -10.0 # Much higher penalty for moving backward
     JUMP_TOL_COUNT            = 2
     JUMP_TOL_PERIOD           = 10
+    # New: General jump spam penalty (if too many jumps in tolerance window)
+    JUMP_SPAM_PENALTY         = -20.0 # INCREASED: Highly penalize frequent jumping
     START_JUMP_COOLDOWN       = 90
     STUCK_JUMP_NUDGE_AT       = 90
 
     # ====== Stagnation cutoff (ADJUSTED) ======
-    # Quicker termination on stagnation
     DEFAULT_STAGNATION_CUTOFF = 180
     DEFAULT_MAX_STEPS         = 4500
 
     # ====== Spindash & wall-behavior (ADJUSTED) ======
-    SPINDASH_WINDOW    = 30      # frames to go from charge to burst
-    # Huge bonus for successful burst
-    SPINDASH_BONUS     = 400.0
-    # Stronger per-frame charge reward
-    CHARGE_HOLD_REWARD = 8.0
-    # Severely penalize wall-jumping
-    WALL_JUMP_PENALTY  = -100.0
+    SPINDASH_WINDOW    = 30
+    SPINDASH_BONUS     = 400.0   # Massive bonus for successful burst
+    CHARGE_HOLD_REWARD = 10.0    # High per-frame charge reward
+    WALL_JUMP_PENALTY  = -100.0  # Extreme penalty for wall-jumping
     BURST_TIMER_FRAMES = 10
-    # Stronger speed scaling post-burst
-    BURST_SPEED_SCALE  = 30.0
+    # EXTREME speed scaling post-burst
+    BURST_SPEED_SCALE  = 100.0
     NEAR_WALL_PIXELS   = 100
 
     # ====== Speed-run incentive (when not near wall) ======
     SPEED_DX_CAP      = 8
-    SPEED_BONUS_SCALE = 40.0      # your chosen strong speed bonus
+    SPEED_BONUS_SCALE = 40.0
 
     def __init__(self, env, max_steps=None, stagnation_cutoff=None):
         super().__init__(env)
@@ -114,7 +100,6 @@ class ResetStateWrapper(gym.Wrapper):
         self.steps = 0
         self.frame_counter = 0
 
-        # Safely extract initial state values
         self.prev_sx = int(info.get("screen_x", info.get("x", 0)))
         self.best_x = self.prev_sx
         self.prev_progress = 0.0
@@ -148,7 +133,6 @@ class ResetStateWrapper(gym.Wrapper):
 
         # Extract info safely
         sx = int(info.get("screen_x", info.get("x", 0)))
-        # Use a high number if end_x is missing or zero, to avoid division by zero later
         end_x = max(int(info.get("screen_x_end", 0)), 10_000)
         rings = int(info.get("rings", self.prev_rings))
         score = int(info.get("score", self.prev_score))
@@ -164,8 +148,35 @@ class ResetStateWrapper(gym.Wrapper):
         custom += self.K_CONTEST * (progress - self.prev_progress)
         self.prev_progress = progress
 
+        # Determine near_wall state immediately to condition rewards later
+        distance_to_wall = end_x - sx if end_x > 0 else None
+        near_wall_dist = (distance_to_wall is not None and distance_to_wall < self.NEAR_WALL_PIXELS)
+        avg_dx15 = sum(list(self.flow_dx)[-15:]) / max(1, min(15, len(self.flow_dx)))
+
+        # Decode current pressed buttons
+        buttons = getattr(self.env.unwrapped, "buttons", [])
+        if hasattr(self.env, "action") and isinstance(action, (int, np.integer)):
+            try:
+                act_arr = self.env.action(action)
+            except Exception:
+                act_arr = np.zeros(len(buttons), dtype=np.int8)
+        else:
+            act_arr = action
+
+        pressed = {buttons[i] for i, v in enumerate(act_arr) if v == 1} if buttons else set()
+        jumped = bool({'A', 'B', 'C'} & pressed)
+        right  = 'RIGHT' in pressed
+        down_b = ('DOWN' in pressed) and ('B' in pressed)
+
+        # Strong stuck signal: long stall + low average forward speed while holding RIGHT
+        stuck_signal = (self.stuck_steps > 60 and avg_dx15 <= 0.2 and right)
+        near_wall = stuck_signal or (near_wall_dist and right)
+
         # Secondary: dx + explore + flow
-        custom += self.K_DX * dx
+        # Only reward K_DX if NOT near a wall, otherwise, it might reward micro-movements
+        if not near_wall:
+            custom += self.K_DX * dx
+
         if sx > self.best_x:
             custom += self.K_EXPLORE * (sx - self.best_x)
             self.best_x = sx
@@ -174,13 +185,11 @@ class ResetStateWrapper(gym.Wrapper):
             self.stuck_steps += 1
 
         self.flow_dx.append(max(dx, 0))
-        # Calculate average forward movement
         avg_dx = sum(self.flow_dx) / max(len(self.flow_dx), 1)
         custom += self.FLOW_SCALE * avg_dx
 
         # Finish / life
         if sx >= end_x:
-            # Time bonus scales inverse with time spent
             t = np.clip(self.frame_counter / 18000.0, 0.0, 1.0)
             custom += self.FINISH_BONUS + (1.0 - t) * self.TIME_FINISH_BONUS
             done = True
@@ -190,7 +199,6 @@ class ResetStateWrapper(gym.Wrapper):
             custom += self.LIFE_GAIN * (lives - self.prev_lives)
         elif lives < self.prev_lives:
             custom += self.LIFE_LOSS * (self.prev_lives - lives)
-            # If a life is lost, terminate the episode
             done = True
             terminated = True
 
@@ -210,22 +218,6 @@ class ResetStateWrapper(gym.Wrapper):
         elif dx < 0:
             custom += self.BACKWARD_PENALTY_PER_PX * (-dx)
 
-        # Decode current pressed buttons
-        buttons = getattr(self.env.unwrapped, "buttons", [])
-        if hasattr(self.env, "action") and isinstance(action, (int, np.integer)):
-            # Convert discrete action index to MultiBinary array
-            try:
-                act_arr = self.env.action(action)
-            except Exception:
-                act_arr = np.zeros(len(buttons), dtype=np.int8)
-        else:
-            act_arr = action
-
-        pressed = {buttons[i] for i, v in enumerate(act_arr) if v == 1} if buttons else set()
-        jumped = bool({'A', 'B', 'C'} & pressed)
-        right  = 'RIGHT' in pressed
-        down_b = ('DOWN' in pressed) and ('B' in pressed)
-
         # Early RIGHT bias (~4s)
         if right and self.frame_counter < 240:
             custom += 2.0
@@ -236,25 +228,25 @@ class ResetStateWrapper(gym.Wrapper):
         if self.stuck_steps > self.STUCK_JUMP_NUDGE_AT and jumped:
             custom += 2.0
 
-        # Track recent jumps (tolerance window)
+        # Track recent jumps (tolerance window) and General Jump Spam Penalty
         if jumped:
             self.jump_history.append(self.frame_counter)
-            while self.jump_history and self.jump_history[0] + self.JUMP_TOL_PERIOD <= self.frame_counter:
-                self.jump_history.popleft()
+
+        while self.jump_history and self.jump_history[0] + self.JUMP_TOL_PERIOD <= self.frame_counter:
+            self.jump_history.popleft()
+
+        if len(self.jump_history) > self.JUMP_TOL_COUNT:
+            # Penalize jumping if too many in the window
+            custom += self.JUMP_SPAM_PENALTY
 
         # Launch/spring bonus (for vertical movement)
         if abs(dy) >= 6 and dx >= 0:
             custom += 10.0
 
-        # ---------- WALL / STUCK DETECTION ----------
-        distance_to_wall = end_x - sx if end_x > 0 else None
-        near_wall_dist = (distance_to_wall is not None and distance_to_wall < self.NEAR_WALL_PIXELS)
-        # Strong stuck signal: long stall + low average forward speed while holding RIGHT
-        avg_dx15 = sum(list(self.flow_dx)[-15:]) / max(1, min(15, len(self.flow_dx)))
-        stuck_signal = (self.stuck_steps > 60 and avg_dx15 <= 0.2 and right)
-        near_wall = stuck_signal or (near_wall_dist and right)
 
-        # Spindash sequence detection
+        # ---------- WALL / STUCK LOGIC (HIGHLY REINFORCED) ----------
+
+        spindash_arming = 0
         charging = down_b and not right                               # DOWN+B with NO RIGHT
         burst_ok = right and ('DOWN' not in pressed) and (self.spindash_arming > 0) # RIGHT with NO DOWN
 
@@ -263,7 +255,7 @@ class ResetStateWrapper(gym.Wrapper):
             if jumped:
                 custom += self.WALL_JUMP_PENALTY
 
-            # --- Spindash Charge and Burst (Stuck_steps check REMOVED for proactivity) ---
+            # Spindash Charge and Burst is the only highly rewarded action here
             # charge (hold)
             if charging:
                 if self.spindash_arming == 0:
@@ -275,7 +267,6 @@ class ResetStateWrapper(gym.Wrapper):
                 custom += self.SPINDASH_BONUS
                 self.spindash_arming = 0
                 self.burst_timer = self.BURST_TIMER_FRAMES
-            # ----------------------------------------------------------------------------
         else:
             # not near wall: reward steady speed to the right
             if dx > 0:
@@ -289,9 +280,10 @@ class ResetStateWrapper(gym.Wrapper):
         if self.spindash_arming > 0:
             self.spindash_arming -= 1
 
-        # post-burst momentum window (Increased Scale)
+        # post-burst momentum window (EXTREME SCALE)
         if self.burst_timer > 0:
             if dx > 0:
+                # 100x multiplier on forward speed for 10 frames after burst
                 custom += self.BURST_SPEED_SCALE * dx
             self.burst_timer -= 1
 
@@ -303,7 +295,7 @@ class ResetStateWrapper(gym.Wrapper):
         self.prev_score = score
         self.prev_lives = lives
 
-        # Early termination on stagnation / max steps (Quicker Cutoff)
+        # Early termination on stagnation / max steps
         if self.stuck_steps >= self.STAGNATION_CUTOFF:
             done = True
             terminated = True
