@@ -1,255 +1,201 @@
-# main_sonic_train.py
-"""
-PPO Training Pipeline for Sonic 2
-Includes extra scalar features: lives, screen_x, screen_y, screen_x_end
-"""
-
+# train_sonic.py
 import os
-os.environ["SDL_VIDEODRIVER"] = "dummy"
-
+import time
+import math
 import numpy as np
 import torch
-from torch.distributions import Categorical
-from gymnasium.wrappers import RecordVideo
+from torch.utils.tensorboard import SummaryWriter  # optional (won't error if not installed)
+from collections import deque
 
 from environment_sonic import make_env
-from network_sonic import ActorCriticCNNExtra
+from network_sonic import ActorCriticCNNExtra as Net
+from agent_sonic import PPOAgent
 from config_sonic import (
-    IMG_SIZE, LEARNING_RATE, GAMMA, CLIP_RANGE,
-    TOTAL_TIMESTEPS, SAVE_FREQ, DEVICE
+    IMG_SIZE,
+    MAX_EPISODE_STEPS,
 )
 
-# ---------------------------
-# Helpers
-# ---------------------------
-def to_chw(obs_np):
-    """Convert env obs to CHW float32 tensor in [0,1]."""
-    if obs_np.ndim == 2:
-        chw = obs_np[None, :, :]
-    elif obs_np.ndim == 3 and obs_np.shape[-1] == 1:
-        chw = np.transpose(obs_np, (2, 0, 1))
-    else:
-        chw = np.mean(obs_np, axis=-1, keepdims=True).transpose(2, 0, 1)
-    return chw.astype(np.float32)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def compute_gae(rewards, values, dones, next_value, gamma=0.99, lam=0.95):
-    """Compute advantages and returns using GAE."""
+
+# ---------- helpers ----------
+
+def to_tensor(x, dtype=torch.float32):
+    return torch.as_tensor(x, dtype=dtype, device=DEVICE)
+
+@torch.no_grad()
+def build_extra(info, prev_sx):
+    """Make the 4-dim side input: progress, rings_norm, dx_norm, lives_norm."""
+    sx = int(info.get("screen_x", info.get("x", 0)))
+    end_x = max(int(info.get("screen_x_end", 0)), 10_000)
+    rings = int(info.get("rings", 0))
+    lives = int(info.get("lives", 3))
+
+    progress = sx / float(end_x)
+    dx = np.clip(sx - prev_sx, -8, 8) / 8.0
+    rings_n = min(rings, 100) / 100.0
+    lives_n = (lives - 1) / 2.0  # {1..3} -> {0..1}
+
+    return np.array([progress, rings_n, dx, lives_n], dtype=np.float32), sx
+
+
+def compute_gae(rewards, values, dones, gamma=0.997, lam=0.95, last_value=0.0):
+    """
+    rewards: (T,)
+    values:  (T,)
+    dones:   (T,)  done at step t (True means episode ended after reward[t])
+    returns: (T,), advantages: (T,)
+    """
     T = len(rewards)
     adv = np.zeros(T, dtype=np.float32)
-    gae = 0.0
+    last_gae = 0.0
     for t in reversed(range(T)):
-        non_terminal = 1.0 - float(dones[t])
-        v_next = next_value if t == T - 1 else values[t + 1]
-        delta = rewards[t] + gamma * v_next * non_terminal - values[t]
-        gae = delta + gamma * lam * non_terminal * gae
-        adv[t] = gae
+        nonterminal = 1.0 - float(dones[t])
+        next_value = last_value if t == T - 1 else values[t + 1]
+        delta = rewards[t] + gamma * next_value * nonterminal - values[t]
+        last_gae = delta + gamma * lam * nonterminal * last_gae
+        adv[t] = last_gae
     returns = adv + values
-    return adv, returns
+    # normalize advantages
+    adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+    return returns.astype(np.float32), adv.astype(np.float32)
 
-def minibatches(*arrays, batch_size=64, shuffle=True):
-    """Yield minibatches from input arrays."""
-    n = arrays[0].shape[0]
-    idx = np.arange(n)
-    if shuffle:
-        np.random.shuffle(idx)
-    for s in range(0, n, batch_size):
-        j = idx[s:s+batch_size]
-        yield [a[j] for a in arrays]
 
-def entropy_coef_schedule(total_steps_done):
-    """Linearly decay entropy coefficient 0.05 → 0.01 over 200k steps."""
-    progress = min(total_steps_done / 200_000.0, 1.0)
-    return 0.05 - 0.04 * progress
+# ---------- main training ----------
 
-# ---------------------------
-# Training
-# ---------------------------
 def main():
-    record_next_episode = False
-    ckpt_dir = "checkpoints"
-    os.makedirs(ckpt_dir, exist_ok=True)
+    # --- env ---
+    env = make_env(render=True, record_video=True)  # videos/sonic_ep-*.mp4
+    obs, info = env.reset()
+    # obs shape -> ensure channel-first (1,H,W)
+    if obs.ndim == 2:
+        obs = np.expand_dims(obs, axis=0)
+    elif obs.shape[0] != 1:
+        # GrayResizeWrapper(keep_dim=False) might give (H,W); keep it (1,H,W)
+        obs = np.expand_dims(obs[0], axis=0)
 
-    # ---- Environment ----
-    env = make_env(render='rgb_array', record_video=True)
-    obs0, info = env.reset() if isinstance(env.reset(), tuple) else (env.reset(), {})
-    obs_chw = to_chw(obs0)
-    obs_channels = obs_chw.shape[0]
-    num_actions = env.action_space.n
+    prev_sx = int(info.get("screen_x", info.get("x", 0)))
+    extra, prev_sx = build_extra(info, prev_sx)
 
-    # ---- Network & Optimizer ----
-    net = ActorCriticCNNExtra(
-        obs_shape=(obs_channels, IMG_SIZE, IMG_SIZE),
-        num_actions=num_actions,
-        extra_state_dim=4
-    ).to(DEVICE)
-    opt = torch.optim.Adam(net.parameters(), lr=LEARNING_RATE)
+    # --- net / agent ---
+    net = Net(obs_shape=(1, IMG_SIZE, IMG_SIZE), num_actions=5, extra_state_dim=4).to(DEVICE)
 
-    # ---- Checkpoint loading ----
-    model_path = os.path.join(ckpt_dir, "sonic_ppo_latest.pt")
-    global_steps = 0
-    if os.path.exists(model_path):
-        print("\033[93m🔄 Loading existing model...\033[0m")
-        checkpoint = torch.load(model_path, map_location=DEVICE)
-        net.load_state_dict(checkpoint["model"])
-        global_steps = checkpoint.get("steps", 0)
+    optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)  # warm start; you can raise later
+    agent = PPOAgent(net, optimizer, clip_range=0.2, grad_clip=0.5, entropy_coef=0.02)
 
-    # ---- PPO hyperparameters ----
-    rollout_steps = 2048
+    # --- logs ---
+    writer = None
+    try:
+        writer = SummaryWriter("logs")
+    except Exception:
+        pass
+
+    # --- hyperparams ---
+    steps_per_update = 2048
     epochs = 4
     batch_size = 64
-    lam = 0.95
-    grad_clip = 0.5
+    gamma = 0.997
+    gae_lambda = 0.95
+    total_updates = 2000
 
-    episode = 0
-    ep_return = 0.0
+    global_steps = 0
+    ep_return, ep_steps = 0.0, 0
+    ep = 0
 
-    print(f"✅ Training starts | obs_shape={(obs_channels, IMG_SIZE, IMG_SIZE)} | actions={num_actions}")
+    print(f"✅ Training starts | obs_shape={obs.shape} | actions=5")
 
-    # ---------------------------
-    # Main training loop
-    # ---------------------------
-    while global_steps < TOTAL_TIMESTEPS:
-        obs_buf, extra_buf, act_buf, logp_buf, rew_buf, val_buf, done_buf = [], [], [], [], [], [], []
+    for update in range(total_updates):
+        # rollout storage
+        obs_buf   = np.zeros((steps_per_update, 1, IMG_SIZE, IMG_SIZE), dtype=np.float32)
+        extra_buf = np.zeros((steps_per_update, 4), dtype=np.float32)
+        act_buf   = np.zeros((steps_per_update,), dtype=np.int64)
+        logp_buf  = np.zeros((steps_per_update,), dtype=np.float32)
+        val_buf   = np.zeros((steps_per_update,), dtype=np.float32)
+        rew_buf   = np.zeros((steps_per_update,), dtype=np.float32)
+        done_buf  = np.zeros((steps_per_update,), dtype=np.float32)
 
-        # -------- Rollout collection --------
-        for _ in range(rollout_steps):
-            obs_t = torch.from_numpy(obs_chw)[None].to(DEVICE)
+        for t in range(steps_per_update):
+            obs_buf[t] = obs.astype(np.float32)
+            extra_buf[t] = extra
 
-            extra_features = np.array([
-                info.get('lives', 3),
-                info.get('screen_x', 0),
-                info.get('screen_y', 0),
-                info.get('screen_x_end', 10_000)
-            ], dtype=np.float32)
-            extra_t = torch.from_numpy(extra_features[None]).to(DEVICE)
+            # act
+            obs_t = to_tensor(obs[None, ...])
+            extra_t = to_tensor(extra[None, ...])
+            action, logprob, value = agent.act(obs_t, extra_t)
 
-            with torch.no_grad():
-                logits, value = net(obs_t, extra_t)
-                dist = Categorical(logits=logits)
-                action = dist.sample()
-                logprob = dist.log_prob(action)
+            action_i = int(action.item())
+            logp_buf[t] = float(logprob.item())
+            val_buf[t] = float(value.item())
+            act_buf[t] = action_i
 
-            a = int(action.item())
-            next_obs, reward, terminated, truncated, info = env.step(a)
-            done = bool(terminated or truncated)
+            # step
+            next_obs, reward, terminated, truncated, info = env.step(action_i)
+            done = terminated or truncated
+            rew_buf[t] = float(reward)
+            done_buf[t] = float(done)
 
-            # Store rollout data
-            obs_buf.append(obs_chw)
-            extra_buf.append(extra_features)
-            act_buf.append(a)
-            logp_buf.append(float(logprob.item()))
-            rew_buf.append(float(reward))
-            val_buf.append(float(value.squeeze().item()))
-            done_buf.append(done)
-
-            # Advance
-            obs_chw = to_chw(next_obs)
-            ep_return += reward
+            ep_return += float(reward)
+            ep_steps += 1
             global_steps += 1
 
+            # next obs/extra
+            if next_obs.ndim == 2:
+                next_obs = np.expand_dims(next_obs, axis=0)
+            elif next_obs.shape[0] != 1:
+                next_obs = np.expand_dims(next_obs[0], axis=0)
+
+            extra, prev_sx = build_extra(info, prev_sx)
+            obs = next_obs
+
             if done:
-                episode += 1
-                print(f"[ep {episode:04d}] return={ep_return:.2f} | steps={global_steps:,}")
+                if writer:
+                    writer.add_scalar("episode/return", ep_return, ep)
+                    writer.add_scalar("episode/steps", ep_steps, ep)
+                print(f"[ep {ep:04d}] return={ep_return:.2f} | steps={ep_steps}")
+                ep += 1
+                ep_return, ep_steps = 0.0, 0
+                # reset
+                obs, info = env.reset()
+                if obs.ndim == 2:
+                    obs = np.expand_dims(obs, axis=0)
+                elif obs.shape[0] != 1:
+                    obs = np.expand_dims(obs[0], axis=0)
+                prev_sx = int(info.get("screen_x", info.get("x", 0)))
+                extra, prev_sx = build_extra(info, prev_sx)
 
-                # Record next episode if at save step
-                if global_steps // SAVE_FREQ != (global_steps - 1) // SAVE_FREQ:
-                    record_next_episode = True
-
-                out = env.reset()
-                obs_chw, info = out if isinstance(out, tuple) else (out, {})
-                obs_chw = to_chw(obs_chw)
-                ep_return = 0.0
-
-                if record_next_episode:
-                    video_dir = "videos"
-                    os.makedirs(video_dir, exist_ok=True)
-                    env = RecordVideo(
-                        env, video_folder=video_dir,
-                        episode_trigger=lambda e: True,
-                        name_prefix=f"sonic_ep{episode:04d}"
-                    )
-                    record_next_episode = False
-
-            if global_steps >= TOTAL_TIMESTEPS:
-                break
-
-        # -------- Compute advantages / returns --------
+        # bootstrap value for GAE
         with torch.no_grad():
-            o_last = torch.from_numpy(obs_chw)[None].to(DEVICE)
-            e_last = torch.from_numpy(np.array([
-                info.get('lives', 3),
-                info.get('screen_x', 0),
-                info.get('screen_y', 0),
-                info.get('screen_x_end', 10_000)
-            ], dtype=np.float32)[None]).to(DEVICE)
-            _, next_value_t = net(o_last, e_last)
-            next_value = float(next_value_t.squeeze().item())
+            v_boot = agent.net(to_tensor(obs[None, ...]), to_tensor(extra[None, ...]))[1].item()
 
-        obs_arr   = np.array(obs_buf, dtype=np.float32)
-        extra_arr = np.array(extra_buf, dtype=np.float32)
-        act_arr   = np.array(act_buf, dtype=np.int64)
-        logp_arr  = np.array(logp_buf, dtype=np.float32)
-        rew_arr   = np.array(rew_buf, dtype=np.float32)
-        val_arr   = np.array(val_buf, dtype=np.float32)
-        done_arr  = np.array(done_buf, dtype=np.bool_)
+        # compute returns & advantages
+        ret_buf, adv_buf = compute_gae(rew_buf, val_buf, done_buf, gamma=gamma, lam=gae_lambda, last_value=v_boot)
 
-        adv_arr, ret_arr = compute_gae(
-            rewards=rew_arr, values=val_arr, dones=done_arr,
-            next_value=next_value, gamma=GAMMA, lam=lam
+        # tensors
+        obs_t   = to_tensor(obs_buf)
+        extra_t = to_tensor(extra_buf)
+        act_t   = torch.as_tensor(act_buf, dtype=torch.long, device=DEVICE)
+        oldlogp_t = to_tensor(logp_buf)
+        ret_t   = to_tensor(ret_buf)
+        val_t   = to_tensor(val_buf)
+        adv_t   = to_tensor(adv_buf)
+
+        # single PPO update (no duplicate optimization elsewhere)
+        agent.update(
+            obs_t, extra_t, act_t, oldlogp_t, ret_t, val_t, adv_t,
+            epochs=epochs, batch_size=batch_size,
+            entropy_coef=lambda s: 0.02,  # fixed or schedule
+            global_steps=global_steps
         )
 
-        # Normalize advantage
-        adv_arr = (adv_arr - adv_arr.mean()) / (adv_arr.std() + 1e-8)
+        # (optional) log scalars
+        if writer:
+            writer.add_scalar("update/mean_return", ret_buf.mean(), update)
+            writer.add_scalar("update/advantage_std", adv_buf.std(), update)
 
-        # -------- PPO update ---------
-        obs_t   = torch.from_numpy(obs_arr).to(DEVICE)
-        extra_t = torch.from_numpy(extra_arr).to(DEVICE)
-        act_t   = torch.from_numpy(act_arr).to(DEVICE)
-        oldlogp_t = torch.from_numpy(logp_arr).to(DEVICE)
-        ret_t   = torch.from_numpy(ret_arr).to(DEVICE)
-        val_t   = torch.from_numpy(val_arr).to(DEVICE)
-        adv_t   = torch.from_numpy(adv_arr).to(DEVICE)
+    env.close()
+    if writer:
+        writer.close()
 
-        for _ in range(epochs):
-            for mb_obs, mb_extra, mb_act, mb_oldlogp, mb_ret, mb_val, mb_adv in minibatches(
-                obs_t, extra_t, act_t, oldlogp_t, ret_t, val_t, adv_t,
-                batch_size=batch_size, shuffle=True
-            ):
-                logits, value = net(mb_obs, mb_extra)
-                dist = Categorical(logits=logits)
-
-                # policy loss
-                new_logp = dist.log_prob(mb_act)
-                ratio = torch.exp(new_logp - mb_oldlogp)
-                unclipped = ratio * mb_adv
-                clipped = torch.clamp(ratio, 1.0 - CLIP_RANGE, 1.0 + CLIP_RANGE) * mb_adv
-                policy_loss = -torch.min(unclipped, clipped).mean()
-
-                # value loss (clipped)
-                value_clipped = mb_val + (value.squeeze() - mb_val).clamp(-CLIP_RANGE, CLIP_RANGE)
-                v_loss_unclipped = (value.squeeze() - mb_ret) ** 2
-                v_loss_clipped = (value_clipped - mb_ret) ** 2
-                value_loss = 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
-
-                # entropy
-                entropy = dist.entropy().mean()
-                ent_coef = entropy_coef_schedule(global_steps)
-                loss = policy_loss + value_loss - ent_coef * entropy
-
-                opt.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(net.parameters(), grad_clip)
-                opt.step()
-
-        # -------- Save checkpoint --------
-        if global_steps // SAVE_FREQ != (global_steps - rollout_steps) // SAVE_FREQ:
-            ckpt = os.path.join(ckpt_dir, f"sonic_ppo_{global_steps // 1000}k.pt")
-            torch.save({"model": net.state_dict(), "steps": global_steps}, ckpt)
-            torch.save({"model": net.state_dict(), "steps": global_steps},
-                       os.path.join(ckpt_dir, "sonic_ppo_latest.pt"))
-            print(f"💾 saved {ckpt}")
-
-    print("✅ Training finished")
 
 if __name__ == "__main__":
     main()

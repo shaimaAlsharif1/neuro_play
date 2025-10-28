@@ -42,11 +42,12 @@ class SonicEnv:
         # START button index
         self.start_idx = self.buttons.index("START")
 
-    def press_start(self, frames=30):
+    def press_start(self, frames=20):
         """Press START button to skip title screen."""
         import numpy as np
         action = np.zeros(self.env.action_space.shape, dtype=np.int8)
         for _ in range(frames):
+            action[:] = 0
             action[self.start_idx] = 1
             step = self.env.step(action)
             if len(step) == 5:
@@ -60,9 +61,8 @@ class SonicEnv:
     def reset(self):
         """Reset environment and skip intro/title."""
         out = self.env.reset()
-        obs = out[0] if isinstance(out, tuple) else out
         self.press_start()
-        return obs
+        return out
 
     def close(self):
         """Close retro environment."""
@@ -71,32 +71,30 @@ class SonicEnv:
 
 def make_env(render=True, record_video=False, video_dir="videos", episode_trigger=lambda e: True):
     """
-    Builds the full Sonic environment pipeline with preprocessing, reward shaping, and optional video recording.
-
-    Args:
-        render (bool): whether to render environment.
-        record_video (bool): whether to record videos.
-        video_dir (str): folder to save videos.
-        episode_trigger (callable): function taking episode index and returning True if video should be recorded.
-
-    Returns:
-        gym.Env: fully wrapped environment ready for training
+    Builds the full Sonic pipeline and ensures we leave the title screen once.
     """
-    base_env = SonicEnv(render=render).env
+    # --- Create and clear title screen ---
+    se = SonicEnv(render=render)
+    base_env = se.env
+    try:
+        base_env.reset()
+        se.press_start(frames=20)
+    except Exception as e:
+        print("[warn] auto-press START failed:", e)
 
-    # ---- Discretize actions (reduce to meaningful combos) ----
+    # ---- Discretize actions (reduced combos) ----
     env = SonicDiscretizer(base_env)
 
     # ---- Reward shaping & step limit ----
     env = ResetStateWrapper(env, max_steps=MAX_EPISODE_STEPS)
 
-    # ---- Frame skipping for faster simulation ----
+    # ---- Frame skipping ----
     env = SkipFrame(env, skip=FRAME_SKIP)
 
-    # ---- Resize and grayscale frames ----
+    # ---- Resize + grayscale ----
     env = GrayResizeWrapper(env, width=IMG_SIZE, height=IMG_SIZE, keep_dim=False)
 
-    # ---- Normalize pixels to [0,1] ----
+    # ---- Normalize to [0,1] ----
     env = NormalizeObs(env)
 
     # ---- Optional video recording ----

@@ -1,185 +1,281 @@
+# resetstate_sonic.py
 import gymnasium as gym
 import numpy as np
-import os
-import pandas as pd
-
-def _cap(x, lo, hi):
-    return max(lo, min(hi, x))
+from collections import deque
 
 class ResetStateWrapper(gym.Wrapper):
     """
-    Sonic 2 – Reward Shaping (Exploration-Safe)
-    -------------------------------------------
-    - Rewards rightward progress and speed.
-    - Keeps exploration alive with mild penalties and small base reward.
-    - Encourages early jumps to learn locomotion.
-    - Delays early resets to avoid training collapse.
+    Sonic-2 reward shaping.
+
+    Highlights:
+      - Uses info['screen_x'] / info['screen_x_end'] for robust progress.
+      - Contest-style progress (primary), modest dx/explore/flow (secondary).
+      - No global jump penalty; start cooldown + jump-when-stuck nudge.
+      - Launch bonus via |dy|.
+      - When stuck at a wall while holding RIGHT, prefer SPINDASH:
+          charge (DOWN+B) → burst (RIGHT+DOWN+B),
+          with charge-hold reward, burst bonus, and post-burst speed multiplier.
+      - Early termination on stagnation.
     """
 
-    def __init__(self, env, max_steps=4500, log_dir="logs"):
+    # ====== Primary ======
+    K_CONTEST = 9000.0  # Δ(screen_x/end_x)
+
+    # ====== Secondary ======
+    K_DX        = 3.0   # per-pixel forward
+    K_EXPLORE   = 5.0   # new-farthest pixels
+    FLOW_WINDOW = 30
+    FLOW_SCALE  = 1.0
+
+    # ====== Finish / lives / rings / score ======
+    FINISH_BONUS      = 500.0
+    TIME_FINISH_BONUS = 1000.0
+    LIFE_GAIN         = 1000.0
+    LIFE_LOSS         = -100.0
+    RING_GAIN         = 1000.0
+    RING_LOSS         = -10.0
+    RING_DEFICIT      = -5.0
+    SCORE_DELTA       = 10.0
+
+    # ====== Anti-stall / heuristics ======
+    IDLE_PENALTY            = -0.2     # light so exploration isn't drowned
+    BACKWARD_PENALTY_PER_PX = -2.0
+    JUMP_TOL_COUNT          = 2
+    JUMP_TOL_PERIOD         = 10
+    START_JUMP_COOLDOWN     = 90       # allow earlier experiments
+    STUCK_JUMP_NUDGE_AT     = 90
+
+    # ====== Stagnation cutoff ======
+    DEFAULT_STAGNATION_CUTOFF = 240    # ~4s w/out new best_x
+    DEFAULT_MAX_STEPS         = 4500
+
+    # ====== Spindash & wall-behavior ======
+    SPINDASH_WINDOW      = 30          # frames to go from charge to burst
+    SPINDASH_BONUS       = 20.0        # big positive for correct sequence
+    CHARGE_HOLD_REWARD   = 0.6         # per-frame while holding DOWN+B (stuck)
+    WALL_JUMP_PENALTY    = -3.0        # discourage pogo at a wall
+    BURST_TIMER_FRAMES   = 10          # reward speed for a short window
+    BURST_SPEED_SCALE    = 2.0         # multiplier for dx during burst window
+
+    def __init__(self, env, max_steps=None, stagnation_cutoff=None):
         super().__init__(env)
-        self.env = env
-        self.max_steps = max_steps
+        self.MAX_STEPS = int(max_steps) if max_steps is not None else self.DEFAULT_MAX_STEPS
+        self.STAGNATION_CUTOFF = (
+            int(stagnation_cutoff) if stagnation_cutoff is not None else self.DEFAULT_STAGNATION_CUTOFF
+        )
 
-        # episode state
+        # Episode state
         self.steps = 0
+        self.frame_counter = 0
+
+        # Progress tracking
         self.prev_info = None
-        self.jump_counter = 0
+        self.prev_sx = 0
+        self.best_x = 0
+        self.prev_progress = 0.0
 
-        # progress tracking
-        self.x_best = 0
-        self.no_progress_steps = 0
-        self.right_streak = 0
-        self.best_dx = 0
-        self.dx_window = [0.0] * 10
+        # Info counters
+        self.prev_rings = 0
+        self.prev_score = 0
+        self.prev_lives = 3
+        self._prev_sy = 0
 
-        # logging
-        self.log_dir = log_dir
-        os.makedirs(log_dir, exist_ok=True)
-        self.episode_records = []
-        self.episode_id = 0
+        # Jump control
+        self.jump_history = deque()
+
+        # Stagnation & flow
+        self.stuck_steps = 0
+        self.flow_dx = deque(maxlen=self.FLOW_WINDOW)
+
+        # Spindash helpers
+        self.spindash_arming = 0
+        self.charge_hold = 0
+        self.burst_timer = 0
 
     def reset(self, **kwargs):
-        out = self.env.reset(**kwargs)
-        obs, info = (out if isinstance(out, tuple) else (out, {}))
-
+        result = self.env.reset(**kwargs)
+        obs, info = result if isinstance(result, tuple) else (result, {})
         self.steps = 0
-        self.prev_info = info
-        self.jump_counter = 0
+        self.frame_counter = 0
 
-        self.x_best = info.get("x", 0)
-        self.no_progress_steps = 0
-        self.right_streak = 0
-        self.best_dx = 0
-        self.dx_window = [0.0] * 10
-        self.episode_records = []
+        self.prev_info = info
+        self.prev_sx = int(info.get("screen_x", info.get("x", 0)))
+        self.best_x = self.prev_sx
+        self.prev_progress = 0.0
+
+        self.prev_rings = int(info.get("rings", 0))
+        self.prev_score = int(info.get("score", 0))
+        self.prev_lives = int(info.get("lives", 3))
+        self._prev_sy = int(info.get("y", 0))
+
+        self.jump_history.clear()
+        self.stuck_steps = 0
+        self.flow_dx.clear()
+
+        self.spindash_arming = 0
+        self.charge_hold = 0
+        self.burst_timer = 0
 
         return obs, info
 
     def step(self, action):
-        step = self.env.step(action)
-
-        # normalize to 5-tuple
-        if len(step) == 5:
-            obs, reward_env, terminated, truncated, info = step
+        # Env step (supports 5-tuple or 4-tuple)
+        result = self.env.step(action)
+        if len(result) == 5:
+            obs, base_rew, terminated, truncated, info = result
             done = terminated or truncated
         else:
-            obs, reward_env, done, info = step
+            obs, base_rew, done, info = result
             terminated, truncated = done, False
 
-        # ---------------- Reward Shaping ----------------
-        R = 0.0
+        self.frame_counter += 1
 
-        x          = info.get("x", 0)
-        lives      = info.get("lives", 3)
-        screen_end = info.get("screen_x_end", 10_000)
+        # Extract info safely
+        sx = int(info.get("screen_x", info.get("x", 0)))
+        end_x = max(int(info.get("screen_x_end", 0)), 10_000)
+        rings = int(info.get("rings", self.prev_rings))
+        score = int(info.get("score", self.prev_score))
+        lives = int(info.get("lives", self.prev_lives))
+        sy = int(info.get("y", self._prev_sy))
 
-        if self.prev_info is None:
-            self.prev_info = {"x": 0, "lives": lives}
-        prev_x    = self.prev_info.get("x", 0)
-        prev_life = self.prev_info.get("lives", lives)
-        dx = x - prev_x
+        dx = sx - self.prev_sx
+        dy = sy - self._prev_sy
+        custom = 0.0
 
-        # update speed window
-        self.dx_window.pop(0)
-        self.dx_window.append(float(dx))
-        dx_avg = sum(self.dx_window) / len(self.dx_window)
+        # Primary: contest-style potential
+        progress = sx / float(end_x)
+        custom += self.K_CONTEST * (progress - self.prev_progress)
+        self.prev_progress = progress
 
-        # (A) Base survival reward — prevents collapse
-        R += 0.05
-
-        # (B) Reward for ANY rightward movement
-        if dx > 0:
-            R += 0.2 * _cap(dx, 0, 12)
-            self.right_streak += 1
-        elif dx == 0:
-            R -= 0.1  # mild idle penalty
-            self.right_streak = 0
+        # Secondary: dx + explore + flow
+        custom += self.K_DX * dx
+        if sx > self.best_x:
+            custom += self.K_EXPLORE * (sx - self.best_x)
+            self.best_x = sx
+            self.stuck_steps = 0
         else:
-            R -= 1.0  # lighter backtrack penalty
-            self.right_streak = 0
+            self.stuck_steps += 1
 
-        # (C) Reward new ground progress (beat x_best)
-        new_progress = max(0, x - self.x_best)
-        if new_progress > 0:
-            R += 2.0 * (new_progress / 5.0)
-            self.x_best = x
-            self.no_progress_steps = 0
-        else:
-            self.no_progress_steps += 1
+        self.flow_dx.append(max(dx, 0))
+        avg_dx = sum(self.flow_dx) / max(len(self.flow_dx), 1)
+        custom += self.FLOW_SCALE * avg_dx
 
-        # (D) Momentum streak bonus
-        if self.right_streak > 0 and (self.right_streak % 20) == 0:
-            R += 8.0
+        # Finish / life
+        if sx >= end_x:
+            t = np.clip(self.frame_counter / 18000.0, 0.0, 1.0)
+            custom += self.FINISH_BONUS + (1.0 - t) * self.TIME_FINISH_BONUS
+            done = True
+            terminated = True
 
-        # (E) Burst bonus (speed burst)
-        if dx > self.best_dx and dx > 4:
-            R += 5.0 + 0.5 * _cap(dx - self.best_dx, 0, 8)
-            self.best_dx = dx
+        if lives > self.prev_lives:
+            custom += self.LIFE_GAIN * (lives - self.prev_lives)
+        elif lives < self.prev_lives:
+            custom += self.LIFE_LOSS * (self.prev_lives - lives)
+            done = True
+            terminated = True
 
-        # (F) Light time pressure
-        R -= 0.01
+        # Rings / score
+        ring_diff = rings - self.prev_rings
+        if ring_diff > 0:
+            custom += self.RING_GAIN * ring_diff
+        elif ring_diff < 0:
+            custom += self.RING_LOSS
+        if rings == 0:
+            custom += self.RING_DEFICIT
+        custom += self.SCORE_DELTA * (score - self.prev_score)
 
-        # (G) Jump shaping
+        # Idle / backward shaping
+        if dx == 0:
+            custom += self.IDLE_PENALTY
+        elif dx < 0:
+            custom += self.BACKWARD_PENALTY_PER_PX * (-dx)
+
+        # Decode current pressed buttons (robust to action indexing)
         buttons = getattr(self.env.unwrapped, "buttons", [])
-        jump_buttons = {'A', 'B', 'C'}
-
-        # convert discrete action to button array if needed
         if hasattr(self.env, "action") and isinstance(action, (int, np.integer)):
             try:
-                action_array = self.env.action(action)
+                act_arr = self.env.action(action)  # Discrete -> MultiBinary
             except Exception:
-                action_array = np.zeros(len(buttons), dtype=np.int8)
+                act_arr = np.zeros(len(buttons), dtype=np.int8)
         else:
-            action_array = action
+            act_arr = action
 
-        pressed = [buttons[i] for i, val in enumerate(action_array) if val == 1]
-        is_jump = any(b in jump_buttons for b in pressed)
-        self.jump_counter = self.jump_counter + 1 if is_jump else 0
+        pressed = {buttons[i] for i, v in enumerate(act_arr) if v == 1} if buttons else set()
+        jumped = bool({'A', 'B', 'C'} & pressed)
+        right = 'RIGHT' in pressed
+        down_b = ('DOWN' in pressed) and ('B' in pressed)
+        burst = right and down_b  # RIGHT+DOWN+B
 
-        if is_jump:
-            if dx <= 0:
-                R -= 0.5  # mild anti-jump penalty (was -2.0)
-            else:
-                R += 0.5  # productive jump reward
+        # Early RIGHT bias (~4s) so he actually hits obstacles/springs
+        if right and self.frame_counter < 240:
+            custom += 2.0
 
-            # Early curiosity bonus for learning jump behavior
-            if self.steps < 3000:
-                R += 0.3
+        # Start-of-episode jump cooldown & jump-when-stuck nudge (no global penalty)
+        if self.frame_counter < self.START_JUMP_COOLDOWN and jumped:
+            custom += -5.0
+        if self.stuck_steps > self.STUCK_JUMP_NUDGE_AT and jumped:
+            custom += 2.0
 
-        # (H) Stuck penalty and delayed early reset
-        if self.no_progress_steps and self.no_progress_steps % 120 == 0:
-            R -= 2.0  # gentler penalty
-        if self.no_progress_steps > 720:  # patience before reset
-            R -= 10.0
-            done = True
+        # Record jumps within tolerance window (no penalty now)
+        if jumped:
+            self.jump_history.append(self.frame_counter)
+            while self.jump_history and self.jump_history[0] + self.JUMP_TOL_PERIOD <= self.frame_counter:
+                self.jump_history.popleft()
 
-        # (I) Terminal events
-        if lives < prev_life:
-            R -= 40.0
-            done = True
+        # Launch/spring bonus: significant vertical change while not going backward
+        if abs(dy) >= 6 and dx >= 0:
+            custom += 10.0
 
-        if x >= screen_end:
-            R += 400.0
-            done = True
+        # ----- Wall-aware behavior & spindash sequence -----
+        stuck_at_wall = (self.stuck_steps > 90 and dx <= 0 and right)
 
-        # bookkeeping
+        # discourage pogo at wall while pressing RIGHT
+        if stuck_at_wall and jumped:
+            custom += self.WALL_JUMP_PENALTY
+
+        if self.stuck_steps > 120:
+            # 1) CHARGE (DOWN+B) without RIGHT → arm and reward holding charge
+            if down_b and not right:
+                if self.spindash_arming == 0:
+                    self.spindash_arming = self.SPINDASH_WINDOW
+                    self.charge_hold = 0
+                self.charge_hold += 1
+                custom += self.CHARGE_HOLD_REWARD
+            # 2) BURST (RIGHT+DOWN+B) within window → big bonus + start burst timer
+            elif burst and self.spindash_arming > 0:
+                custom += self.SPINDASH_BONUS
+                self.spindash_arming = 0
+                self.burst_timer = self.BURST_TIMER_FRAMES
+        else:
+            self.spindash_arming = 0
+            self.charge_hold = 0
+
+        # decay arming window
+        if self.spindash_arming > 0:
+            self.spindash_arming -= 1
+
+        # reward post-burst forward speed briefly
+        if self.burst_timer > 0:
+            if dx > 0:
+                custom += self.BURST_SPEED_SCALE * dx
+            self.burst_timer -= 1
+
+        # Bookkeeping
         self.steps += 1
-        if self.steps > self.max_steps:
+        self.prev_sx = sx
+        self._prev_sy = sy
+        self.prev_rings = rings
+        self.prev_score = score
+        self.prev_lives = lives
+
+        # Early termination on stagnation
+        if self.stuck_steps >= self.STAGNATION_CUTOFF:
             done = True
+            terminated = True
 
-        self.episode_records.append({
-            "step": self.steps,
-            "action": int(action) if isinstance(action, (int, np.integer)) else -1,
-            "is_jump": bool(is_jump),
-            "x": int(x),
-            "dx": int(dx),
-            "dx_avg": float(dx_avg),
-            "x_best": int(self.x_best),
-            "streak": int(self.right_streak),
-            "reward": float(round(R, 4)),
-        })
+        if self.steps >= self.MAX_STEPS:
+            done = True
+            truncated = True
 
-        self.prev_info = info
-
-        return obs, float(R), terminated, truncated, info
+        reward = base_rew + custom
+        return obs, reward, terminated, truncated, info
