@@ -98,21 +98,34 @@ class Agent:
         print(f"Epsilon decay is {self.epsilon_decay}")
 
 
-    def get_action(self, state):
-        # if torch.rand(1) < self.epsilon:
-        #     return torch.randint(self.nb_actions, (1, 1))
+    # def get_action(self, state):
+    #     # if torch.rand(1) < self.epsilon:
+    #     #     return torch.randint(self.nb_actions, (1, 1))
 
-        # else:
-        #     av = self.model(state).detach()
-        #     return torch.argmax(av, dim = 1, keepdim=True)
+    #     # else:
+    #     #     av = self.model(state).detach()
+    #     #     return torch.argmax(av, dim = 1, keepdim=True)
+    #     if np.random.rand() < self.epsilon:
+    #         return np.random.randint(self.nb_actions)
+    #     else:
+    #         with torch.no_grad():
+    #             state_t = torch.as_tensor(state, dtype=torch.float32).to(self.device)
+    #             if state_t.ndim == 3:
+    #                 state_t = state_t.unsqueeze(0)
+    #                 q_values = self.model(state_t)
+    #             return int(torch.argmax(q_values, dim=1).item())
+
+    def get_action(self, state):
         if np.random.rand() < self.epsilon:
             return np.random.randint(self.nb_actions)
         else:
             with torch.no_grad():
+                if isinstance(state, tuple):
+                    state = state[0]
                 state_t = torch.as_tensor(state, dtype=torch.float32).to(self.device)
                 if state_t.ndim == 3:
                     state_t = state_t.unsqueeze(0)
-                    q_values = self.model(state_t)
+                q_values = self.model(state_t)
                 return int(torch.argmax(q_values, dim=1).item())
 
 
