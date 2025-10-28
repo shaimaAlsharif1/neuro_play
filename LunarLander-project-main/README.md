@@ -12,7 +12,7 @@ The lander moved aimlessly, often spinning or crashing within seconds.
 The **average reward was -360.64**, showing that the random agent performed very poorly.
 
 📹 Random test videos
-![Random Agent](LunarLander-project-main/media/random_agent.gif)
+![Random Agent](media/random_agent.gif)
 
 ---
 
