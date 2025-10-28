@@ -24,7 +24,7 @@ class ResetStateWrapper(gym.Wrapper):
     K_CONTEST = 9000.0  # Δ(screen_x/end_x)
 
     # ====== Secondary ======
-    K_DX        = 20.0  # per-pixel forward (your chosen value)
+    K_DX        = 50.0  # per-pixel forward (your chosen value)
     K_EXPLORE   = 5.0   # new-farthest pixels
     FLOW_WINDOW = 30
     FLOW_SCALE  = 1.0
@@ -55,14 +55,14 @@ class ResetStateWrapper(gym.Wrapper):
     SPINDASH_WINDOW      = 30        # frames to go from charge to burst
     SPINDASH_BONUS       = 50.0      # your chosen strong bonus
     CHARGE_HOLD_REWARD   = 2.0       # your chosen per-frame charge reward
-    WALL_JUMP_PENALTY    = -5.0
+    WALL_JUMP_PENALTY    = -20.0
     BURST_TIMER_FRAMES   = 10
     BURST_SPEED_SCALE    = 8.0
     NEAR_WALL_PIXELS     = 100
 
     # ====== Speed-run incentive (when not near wall) ======
     SPEED_DX_CAP      = 8
-    SPEED_BONUS_SCALE = 10.0          # your chosen strong speed bonus
+    SPEED_BONUS_SCALE = 40.0          # your chosen strong speed bonus
 
     def __init__(self, env, max_steps=None, stagnation_cutoff=None):
         super().__init__(env)
