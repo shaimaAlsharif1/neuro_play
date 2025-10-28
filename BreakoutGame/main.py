@@ -11,8 +11,8 @@ os.environ['KMP_duplicate_LIB_OK'] = 'TRUE'
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-# environment = DQNBreakout(device=device,render_mode = 'rgb_array')
-environment = DQNBreakout(device=device,render_mode = 'human')
+environment = DQNBreakout(device=device,render_mode = 'rgb_array')
+# environment = DQNBreakout(device=device,render_mode = 'human')
 
 model = AtariNet(nb_actions=4)
 
