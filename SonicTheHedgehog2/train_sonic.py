@@ -18,6 +18,21 @@ from config_sonic import (
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+SAVE_EVERY_STEPS = 50_000
+CHECKPOINT_DIR = "checkpoints"
+
+def save_checkpoint(path, net, optimizer, global_steps, update, extra_info=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save({
+        "model_state_dict": net.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "global_steps": global_steps,
+        "update": update,
+        "device": str(DEVICE),
+        "extra_info": extra_info or {},
+    }, path)
+    print(f"💾 Saved checkpoint to {path}")
+
 # ---------- helpers ----------
 
 def to_tensor(x, dtype=torch.float32):
@@ -137,6 +152,15 @@ def main():
             ep_return += float(reward)
             ep_steps += 1
             global_steps += 1
+
+            if global_steps % SAVE_EVERY_STEPS == 0:
+                    ckpt_path = os.path.join(
+                        CHECKPOINT_DIR, f"sonic_step-{global_steps}.pt"
+                    )
+                    save_checkpoint(
+                        ckpt_path, net, optimizer, global_steps, update,
+                        extra_info={"episode": ep}
+                    )
 
             # next obs/extra
             if next_obs.ndim == 2:
