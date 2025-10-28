@@ -1,7 +1,8 @@
-
-# train_sonic.py
-# PPO training for Sonic 2 with progress-shaped rewards (done in wrappers)
-# and a simple entropy schedule for better early exploration.
+# main_sonic_train.py
+"""
+PPO Training Pipeline for Sonic 2
+Includes extra scalar features: lives, screen_x, screen_y, screen_x_end
+"""
 
 import os
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -9,7 +10,6 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 import glob
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.distributions import Categorical
 from gymnasium.wrappers import RecordVideo
 
@@ -33,10 +33,10 @@ def to_chw(obs_np):
     else:
         # average RGB to grayscale channel then CHW
         chw = np.mean(obs_np, axis=-1, keepdims=True).transpose(2, 0, 1)
-    return (chw.astype(np.float32) / 255.0)
+    return chw.astype(np.float32)
 
 def compute_gae(rewards, values, dones, next_value, gamma=0.99, lam=0.95):
-    """Standard GAE (vectorized over time dimension)."""
+    """Compute advantages and returns using GAE."""
     T = len(rewards)
     adv = np.zeros(T, dtype=np.float32)
     gae = 0.0
@@ -50,6 +50,7 @@ def compute_gae(rewards, values, dones, next_value, gamma=0.99, lam=0.95):
     return adv, returns
 
 def minibatches(*arrays, batch_size=64, shuffle=True):
+    """Yield minibatches from input arrays."""
     n = arrays[0].shape[0]
     idx = np.arange(n)
     if shuffle:
@@ -58,16 +59,8 @@ def minibatches(*arrays, batch_size=64, shuffle=True):
         j = idx[s:s + batch_size]
         yield [a[j] for a in arrays]
 
-def latest_checkpoint(path="checkpoints"):
-    if not os.path.isdir(path):
-        return None
-    files = glob.glob(os.path.join(path, "sonic_ppo_*.pt"))
-    if not files:
-        files = glob.glob(os.path.join(path, "sonic_ppo_latest.pt"))
-    return max(files, key=os.path.getmtime) if files else None
-
 def entropy_coef_schedule(total_steps_done):
-    # Linearly decay 0.05 -> 0.01 over the first 200k steps, then stay at 0.01
+    """Linearly decay entropy coefficient 0.05 → 0.01 over 200k steps."""
     progress = min(total_steps_done / 200_000.0, 1.0)
     return 0.05 - 0.04 * progress
 
@@ -80,16 +73,14 @@ def main():
     ckpt_dir = "checkpoints"
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # ---- Env ----
+    # ---- Environment ----
     env = make_env(render='rgb_array', record_video=True)
-
-    out = env.reset()
-    obs0, info = out if isinstance(out, tuple) else (out, {})
+    obs0, info = env.reset() if isinstance(env.reset(), tuple) else (env.reset(), {})
     obs_chw = to_chw(obs0)
     obs_channels = obs_chw.shape[0]
     num_actions = env.action_space.n
 
-    # ---- Net/Opt ----
+    # ---- Network & Optimizer ----
     net = ActorCriticCNNExtra(
         obs_shape=(obs_channels, IMG_SIZE, IMG_SIZE),
         num_actions=num_actions,
@@ -97,16 +88,16 @@ def main():
     ).to(DEVICE)
     opt = torch.optim.Adam(net.parameters(), lr=LEARNING_RATE)
 
-    # ---- Try resume ----
-    ckpt_path = latest_checkpoint(ckpt_dir)
+    # ---- Checkpoint loading ----
+    model_path = os.path.join(ckpt_dir, "sonic_ppo_latest.pt")
     global_steps = 0
-    if ckpt_path:
-        print(f"\033[93m🔄 Resuming from {ckpt_path}\033[0m")
-        checkpoint = torch.load(ckpt_path, map_location=DEVICE)
+    if os.path.exists(model_path):
+        print("\033[93m🔄 Loading existing model...\033[0m")
+        checkpoint = torch.load(model_path, map_location=DEVICE)
         net.load_state_dict(checkpoint["model"])
-        global_steps = int(checkpoint.get("steps", 0))
+        global_steps = checkpoint.get("steps", 0)
 
-    # ---- PPO hyperparams ----
+    # ---- PPO hyperparameters ----
     rollout_steps = 2048
     epochs = 4
     batch_size = 64
@@ -118,13 +109,15 @@ def main():
 
     print(f"✅ Training starts | obs_shape={(obs_channels, IMG_SIZE, IMG_SIZE)} | actions={num_actions}")
 
+    # ---------------------------
+    # Main training loop
+    # ---------------------------
     while global_steps < TOTAL_TIMESTEPS:
         # Storage
         obs_buf, extra_buf, act_buf, logp_buf, rew_buf, val_buf, done_buf = [], [], [], [], [], [], []
 
-        # --------- Rollout collection ---------
-        for t in range(rollout_steps):
-            # Prepare tensors
+        # -------- Rollout collection --------
+        for _ in range(rollout_steps):
             obs_t = torch.from_numpy(obs_chw)[None].to(DEVICE)
 
             extra_features = np.array([
@@ -151,7 +144,7 @@ def main():
                 terminated, truncated = done, False
             done = bool(terminated or truncated)
 
-            # Store
+            # Store rollout data
             obs_buf.append(obs_chw)
             extra_buf.append(extra_features)
             act_buf.append(a)
@@ -171,15 +164,15 @@ def main():
 
             if done:
                 episode += 1
-                print(f"[ep {episode:04d}] return={ep_return:.2f} | global_steps={global_steps:,}")
+                print(f"[ep {episode:04d}] return={ep_return:.2f} | steps={global_steps:,}")
 
-                # flip a flag to record the very next episode after each SAVE_FREQ
-                if (global_steps // SAVE_FREQ) != ((global_steps - 1) // SAVE_FREQ):
+                # Record next episode if at save step
+                if global_steps // SAVE_FREQ != (global_steps - 1) // SAVE_FREQ:
                     record_next_episode = True
 
                 out = env.reset()
-                obs0, info = out if isinstance(out, tuple) else (out, {})
-                obs_chw = to_chw(obs0)
+                obs_chw, info = out if isinstance(out, tuple) else (out, {})
+                obs_chw = to_chw(obs_chw)
                 ep_return = 0.0
 
                 if record_next_episode:
@@ -195,7 +188,7 @@ def main():
             if global_steps >= TOTAL_TIMESTEPS:
                 break
 
-        # --------- Compute advantages / returns ---------
+        # -------- Compute advantages / returns --------
         with torch.no_grad():
             o_last = torch.from_numpy(obs_chw)[None].to(DEVICE)
             e_last = torch.from_numpy(np.array([
@@ -219,12 +212,11 @@ def main():
             rewards=rew_arr, values=val_arr, dones=done_arr,
             next_value=next_value, gamma=GAMMA, lam=lam
         )
-        # Advantage normalization (per-rollout)
-        adv_mean, adv_std = adv_arr.mean(), adv_arr.std() + 1e-8
-        adv_arr = (adv_arr - adv_mean) / adv_std
 
-        # --------- PPO update ---------
-        # Cache tensors on device
+        # Normalize advantage
+        adv_arr = (adv_arr - adv_arr.mean()) / (adv_arr.std() + 1e-8)
+
+        # -------- PPO update ---------
         obs_t   = torch.from_numpy(obs_arr).to(DEVICE)
         extra_t = torch.from_numpy(extra_arr).to(DEVICE)
         act_t   = torch.from_numpy(act_arr).to(DEVICE)
@@ -254,7 +246,7 @@ def main():
                 v_loss_clipped = (value_clipped - mb_ret) ** 2
                 value_loss = 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
 
-                # entropy (schedule)
+                # entropy
                 entropy = dist.entropy().mean()
                 ent_coef = entropy_coef_schedule(global_steps)
                 loss = policy_loss + value_loss - ent_coef * entropy
@@ -264,9 +256,9 @@ def main():
                 torch.nn.utils.clip_grad_norm_(net.parameters(), grad_clip)
                 opt.step()
 
-        # --------- Save checkpoint ---------
-        if (global_steps // SAVE_FREQ) != ((global_steps - rollout_steps) // SAVE_FREQ):
-            ckpt = os.path.join(ckpt_dir, f"sonic_ppo_{global_steps // SAVE_FREQ}k.pt")
+        # -------- Save checkpoint --------
+        if global_steps // SAVE_FREQ != (global_steps - rollout_steps) // SAVE_FREQ:
+            ckpt = os.path.join(ckpt_dir, f"sonic_ppo_{global_steps // 1000}k.pt")
             torch.save({"model": net.state_dict(), "steps": global_steps}, ckpt)
             torch.save({"model": net.state_dict(), "steps": global_steps},
                        os.path.join(ckpt_dir, "sonic_ppo_latest.pt"))
