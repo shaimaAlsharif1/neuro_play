@@ -17,7 +17,7 @@ class AtariNet(nn.Module):
         self.action_value2 = nn.Linear(1024,1024)
         self.action_value3 = nn.Linear(1024,nb_actions)
 
-        self.state_value1 = nn.Linear(3134,1024)
+        self.state_value1 = nn.Linear(3136,1024)
         self.state_value2 = nn.Linear(1024,1024)
         self.state_value3 = nn.Linear(1024,1)
     def forward(self, x):
