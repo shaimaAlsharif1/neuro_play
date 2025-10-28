@@ -5,16 +5,19 @@ from collections import deque
 
 class ResetStateWrapper(gym.Wrapper):
     """
-    Sonic-2 reward shaping.
+    Sonic-2 reward shaping with wall-aware behavior and speed incentive.
 
     Highlights:
-      - Uses info['screen_x'] / info['screen_x_end'] for robust progress.
-      - Contest-style progress (primary), modest dx/explore/flow (secondary).
-      - No global jump penalty; start cooldown + jump-when-stuck nudge.
-      - Launch bonus via |dy|.
-      - When stuck at a wall while holding RIGHT, prefer SPINDASH:
-          charge (DOWN+B) → burst (RIGHT+DOWN+B),
-          with charge-hold reward, burst bonus, and post-burst speed multiplier.
+      - Contest-style progress potential (primary).
+      - dx/explore/flow shaping (secondary).
+      - No global jump penalty; context-specific shaping at walls only.
+      - Launch/spring bonus from vertical spikes (|dy|).
+      - WALL LOGIC: if near a wall / stuck while pressing RIGHT:
+          * penalize jumps,
+          * reward spindash charge (DOWN+B) per frame,
+          * big bonus on burst (RIGHT+DOWN+B),
+          * amplify forward speed for a short window after burst.
+      - SPEED INCENTIVE: when not near a wall, reward keeping horizontal speed.
       - Early termination on stagnation.
     """
 
@@ -22,7 +25,7 @@ class ResetStateWrapper(gym.Wrapper):
     K_CONTEST = 9000.0  # Δ(screen_x/end_x)
 
     # ====== Secondary ======
-    K_DX        = 3.0   # per-pixel forward
+    K_DX        = 10.0   # per-pixel forward
     K_EXPLORE   = 5.0   # new-farthest pixels
     FLOW_WINDOW = 30
     FLOW_SCALE  = 1.0
@@ -42,7 +45,7 @@ class ResetStateWrapper(gym.Wrapper):
     BACKWARD_PENALTY_PER_PX = -2.0
     JUMP_TOL_COUNT          = 2
     JUMP_TOL_PERIOD         = 10
-    START_JUMP_COOLDOWN     = 90       # allow earlier experiments
+    START_JUMP_COOLDOWN     = 90       # discourage pogo in the first 1.5s
     STUCK_JUMP_NUDGE_AT     = 90
 
     # ====== Stagnation cutoff ======
@@ -56,6 +59,11 @@ class ResetStateWrapper(gym.Wrapper):
     WALL_JUMP_PENALTY    = -3.0        # discourage pogo at a wall
     BURST_TIMER_FRAMES   = 10          # reward speed for a short window
     BURST_SPEED_SCALE    = 2.0         # multiplier for dx during burst window
+    NEAR_WALL_PIXELS     = 100         # distance threshold for explicit wall proximity
+
+    # ====== Speed-run incentive (when not near wall) ======
+    SPEED_DX_CAP         = 8           # cap dx considered for speed bonus
+    SPEED_BONUS_SCALE    = 0.3         # small per-frame bonus for positive dx
 
     def __init__(self, env, max_steps=None, stagnation_cutoff=None):
         super().__init__(env)
@@ -206,7 +214,7 @@ class ResetStateWrapper(gym.Wrapper):
         down_b = ('DOWN' in pressed) and ('B' in pressed)
         burst = right and down_b  # RIGHT+DOWN+B
 
-        # Early RIGHT bias (~4s) so he actually hits obstacles/springs
+        # Early RIGHT bias (~4s) so he actually commits to moving
         if right and self.frame_counter < 240:
             custom += 2.0
 
@@ -216,7 +224,7 @@ class ResetStateWrapper(gym.Wrapper):
         if self.stuck_steps > self.STUCK_JUMP_NUDGE_AT and jumped:
             custom += 2.0
 
-        # Record jumps within tolerance window (no penalty now)
+        # Track jumps within tolerance window (no penalty now)
         if jumped:
             self.jump_history.append(self.frame_counter)
             while self.jump_history and self.jump_history[0] + self.JUMP_TOL_PERIOD <= self.frame_counter:
@@ -226,27 +234,43 @@ class ResetStateWrapper(gym.Wrapper):
         if abs(dy) >= 6 and dx >= 0:
             custom += 10.0
 
-        # ----- Wall-aware behavior & spindash sequence -----
-        stuck_at_wall = (self.stuck_steps > 90 and dx <= 0 and right)
+        # ---------- WALL LOGIC ----------
+        # Two signals:
+        #  (1) "stuck while pressing RIGHT"  (no new best_x for a while and dx <= 0)
+        #  (2) Explicit proximity to wall using screen range if available
+        distance_to_wall = None
+        if end_x > 0:
+            distance_to_wall = end_x - sx
+        near_wall_dist = (distance_to_wall is not None and distance_to_wall < self.NEAR_WALL_PIXELS)
+        stuck_signal = (self.stuck_steps > 60 and dx <= 0 and right)
+        near_wall = stuck_signal or (near_wall_dist and right)
 
-        # discourage pogo at wall while pressing RIGHT
-        if stuck_at_wall and jumped:
-            custom += self.WALL_JUMP_PENALTY
+        if near_wall:
+            # discourage pogo-jumping at the wall
+            if jumped:
+                custom += self.WALL_JUMP_PENALTY
 
-        if self.stuck_steps > 120:
-            # 1) CHARGE (DOWN+B) without RIGHT → arm and reward holding charge
-            if down_b and not right:
-                if self.spindash_arming == 0:
-                    self.spindash_arming = self.SPINDASH_WINDOW
-                    self.charge_hold = 0
-                self.charge_hold += 1
-                custom += self.CHARGE_HOLD_REWARD
-            # 2) BURST (RIGHT+DOWN+B) within window → big bonus + start burst timer
-            elif burst and self.spindash_arming > 0:
-                custom += self.SPINDASH_BONUS
-                self.spindash_arming = 0
-                self.burst_timer = self.BURST_TIMER_FRAMES
+            # spindash path: charge (DOWN+B) → burst (RIGHT+DOWN+B)
+            if self.stuck_steps > 90:
+                # charge without RIGHT held
+                if down_b and not right:
+                    if self.spindash_arming == 0:
+                        self.spindash_arming = self.SPINDASH_WINDOW
+                        self.charge_hold = 0
+                    self.charge_hold += 1
+                    custom += self.CHARGE_HOLD_REWARD
+                # burst (RIGHT+DOWN+B) inside window
+                elif burst and self.spindash_arming > 0:
+                    custom += self.SPINDASH_BONUS
+                    self.spindash_arming = 0
+                    self.burst_timer = self.BURST_TIMER_FRAMES
         else:
+            # not near wall: encourage steady speed to the right
+            if dx > 0:
+                speed_bonus = min(dx, self.SPEED_DX_CAP) * self.SPEED_BONUS_SCALE
+                custom += speed_bonus
+
+            # reset spindash arming if we left wall context
             self.spindash_arming = 0
             self.charge_hold = 0
 
