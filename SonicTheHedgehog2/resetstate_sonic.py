@@ -37,8 +37,10 @@ class ResetStateWrapper(gym.Wrapper):
     BACKWARD_PENALTY_PER_PX   = -10.0 # Much higher penalty for moving backward
     JUMP_TOL_COUNT            = 2
     JUMP_TOL_PERIOD           = 10
-    # New: General jump spam penalty (if too many jumps in tolerance window)
-    JUMP_SPAM_PENALTY         = -20.0 # INCREASED: Highly penalize frequent jumping
+    # Severe penalty for jumping when position does not change (dx <= 0)
+    STALLED_JUMP_PENALTY      = -50.0 # NEW: Severe penalty for non-moving jump
+    # Minor penalty for general jump frequency (over tolerance window)
+    FREQUENT_JUMP_PENALTY     = -5.0  # NEW: Minor penalty for overall spam
     START_JUMP_COOLDOWN       = 90
     STUCK_JUMP_NUDGE_AT       = 90
 
@@ -230,14 +232,18 @@ class ResetStateWrapper(gym.Wrapper):
 
         # Track recent jumps (tolerance window) and General Jump Spam Penalty
         if jumped:
+            # 1. IMMEDIATE SEVERE PENALTY for jumping while stalled (dx <= 0)
+            if dx <= 0:
+                custom += self.STALLED_JUMP_PENALTY
+
             self.jump_history.append(self.frame_counter)
 
         while self.jump_history and self.jump_history[0] + self.JUMP_TOL_PERIOD <= self.frame_counter:
             self.jump_history.popleft()
 
         if len(self.jump_history) > self.JUMP_TOL_COUNT:
-            # Penalize jumping if too many in the window
-            custom += self.JUMP_SPAM_PENALTY
+            # 2. MINOR PENALTY for general jump frequency (JUMP SPAM)
+            custom += self.FREQUENT_JUMP_PENALTY
 
         # Launch/spring bonus (for vertical movement)
         if abs(dy) >= 6 and dx >= 0:
