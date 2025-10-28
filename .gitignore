@@ -17,7 +17,7 @@ raw_data/
 frames/
 SonicTheHedgehog2/videos/
 *.mp4
-*.gif
+# *.gif
 *.csv
 
 # ==== IDE & OS ====
