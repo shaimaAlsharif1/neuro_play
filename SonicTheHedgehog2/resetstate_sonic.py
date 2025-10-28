@@ -1,120 +1,251 @@
+# resetstate_sonic.py
+"""
+Reward shaping and state reset wrapper for Sonic 2.
+Uses impactful rewards (29-30-50 scale) without ring dependencies.
+"""
+
 import gymnasium as gym
 import numpy as np
-from collections import deque
 
 class ResetStateWrapper(gym.Wrapper):
     """
-    Reward shaping wrapper for Sonic 2.
-
-    This wrapper implements the specialized reward system to:
-    1. Strongly reward forward progress (increase in screen_x).
-    2. Penalize and terminate the episode if the agent gets stuck (no screen_x progress).
-    3. Lightly penalize jump actions to reduce excessive jumping.
-    4. Terminate the episode if lives are lost or max steps are reached.
+    Custom reward shaping with high-impact rewards (29-30-50 scale).
+    Focused purely on progress, strategic actions, and penalties.
+    No ring-based rewards.
     """
 
-    # --- Reward & Penalty Constants (Key Tuning Parameters) ---
-    PROGRESS_REWARD_SCALE = 10.0    # Reward per screen_x unit of progress (Increased to 10.0 as requested)
-    JUMP_PENALTY = -0.05            # Penalty for taking a jump action (to curb excessive jumping)
-    STUCK_TIMEOUT = 500             # Max frames without screen_x progress before termination (to address getting stuck)
-    STUCK_TERMINATION_PENALTY = -3.0 # Significant penalty for getting stuck
-    LIFE_LOSS_PENALTY = -5.0        # Significant penalty for losing a life
-    STEP_PENALTY = -0.00005         # Minor penalty per step (encourages speed/efficiency)
-
-    def __init__(self, env, max_steps):
+    def __init__(self, env, max_steps=4500):
         super().__init__(env)
-        self._max_steps = max_steps
+        self.max_steps = max_steps
+        self.current_steps = 0
 
-        # The wrapped environment must be the Discretizer to get action button mapping
-        if hasattr(self.env, '_decode_discrete_action'):
-            # This map holds the actual button combinations for each discrete action index.
-            self._action_map = self.env._decode_discrete_action
-            self._buttons = self.env.unwrapped.buttons
-            # Find indices for the jump buttons, typically 'A', 'B', or 'C'
-            self.jump_button_indices = [
-                self._buttons.index(btn) for btn in ['A', 'B', 'C']
-                if btn in self._buttons
-            ]
-        else:
-            print("[WARN] ResetStateWrapper expects a Discretizer wrapper below it for detailed action analysis.")
-            self.jump_button_indices = []
-            self._action_map = None
+        # Jump management
+        self.jump_count = 0
+        self.consecutive_jumps = 0
+        self.last_action = 0
+        self.jump_cooldown = 0
 
-        self.reset_internal_state()
+        # Progress tracking
+        self.last_x = 0
+        self.max_x_reached = 0
+        self.stuck_counter = 0
+        self.last_reward_x = 0
+        self.zone_start_x = 0
 
-    def reset_internal_state(self):
-        """Resets all internal episode tracking variables."""
-        self._steps = 0
-        self._max_x = -np.inf         # Max horizontal position reached
-        self._stuck_steps = 0         # Steps since _max_x last increased
-        self._prev_lives = None       # Tracks lives for life loss penalty
+        # State tracking
+        self.last_lives = 3
+        self.last_score = 0
 
     def reset(self, **kwargs):
-        self.reset_internal_state()
-        # Reset the environment and get the initial observation/info
+        """Reset environment and tracking variables"""
         obs, info = self.env.reset(**kwargs)
-        # Initialize max_x with the starting position
-        self._max_x = info.get("screen_x", info.get("x", 0))
-        self._prev_lives = info.get("lives", 3)
+
+        # Reset tracking variables
+        self.current_steps = 0
+        self.jump_count = 0
+        self.consecutive_jumps = 0
+        self.last_action = 0
+        self.jump_cooldown = 0
+
+        # Get initial position
+        self.last_x = self._get_screen_x(info)
+        self.max_x_reached = self.last_x
+        self.zone_start_x = self.last_x
+        self.stuck_counter = 0
+        self.last_reward_x = self.last_x
+
+        self.last_lives = info.get('lives', 3)
+        self.last_score = info.get('score', 0)
+
         return obs, info
 
-    def step(self, action):
-        # action is the discrete index (0-N) from the SonicDiscretizer
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        self._steps += 1
+    def _get_screen_x(self, info):
+        """Extract screen x position from info dict"""
+        return info.get('screen_x', info.get('x', 0))
 
-        # --- 1. Basic Status & Position ---
-        current_x = info.get("screen_x", info.get("x", 0))
-        current_lives = info.get("lives", self._prev_lives)
+    def _calculate_reward_shaping(self, info, action):
+        """
+        Calculate shaped rewards using impactful values (29-30-50 scale)
+        No ring-based rewards or penalties
+        """
+        reward = 0.0
+        current_x = self._get_screen_x(info)
+        current_lives = info.get('lives', 3)
+        current_score = info.get('score', 0)
 
-        new_shaped_reward = 0.0
+        # === MAJOR PROGRESS REWARDS (50 scale) ===
+        # Major forward progress reward
+        x_progress = current_x - self.last_reward_x
+        if x_progress > 20:  # Significant movement
+            progress_reward = min(50, x_progress * 2)  # Cap at 50
+            reward += progress_reward
+            self.last_reward_x = current_x
+            self.stuck_counter = 0
 
-        # --- 2. Reward Shaping Logic ---
+        # Major milestone reward - reaching new maximum
+        if current_x > self.max_x_reached + 100:  # Major progress
+            milestone_bonus = 50
+            reward += milestone_bonus
+            self.max_x_reached = current_x
+            self.stuck_counter = 0
 
-        # A. Forward Progress Reward (Core Reward)
-        if current_x > self._max_x:
-            progress_reward = (current_x - self._max_x) * self.PROGRESS_REWARD_SCALE
-            new_shaped_reward += progress_reward
-            self._max_x = current_x
-            self._stuck_steps = 0
+        # Zone completion bonus (estimated)
+        zone_length = 6000  # Approximate Emerald Hill Zone length
+        zone_progress = (current_x - self.zone_start_x) / zone_length
+        if zone_progress > 0.8:  # 80% through zone
+            reward += 50
+
+        # === STRATEGIC ACTION REWARDS (30 scale) ===
+        # Smart spindash usage (action 2) - helps with walls
+        if action == 2 and self.stuck_counter > 10:  # Using spindash when stuck
+            reward += 30
+            self.stuck_counter = 0  # Reset stuck counter
+
+        # Smart crouching when stuck (action 3)
+        if action == 3 and self.stuck_counter > 15:
+            reward += 15
+
+        # Effective jumping (action 1) - only when it makes sense
+        if action == 1 and self.stuck_counter < 5 and self.consecutive_jumps == 0:
+            reward += 10  # Reward strategic jumping
+
+        # === PENALTIES (29 scale) ===
+        # Major penalty for excessive jumping
+        if action == 1:  # Jump action
+            self.jump_count += 1
+            self.consecutive_jumps += 1 if self.last_action == 1 else 1
+
+            # Heavy penalty for spam jumping
+            if self.consecutive_jumps > 3:
+                reward -= 29  # Major penalty for jump spam
+            elif self.consecutive_jumps > 2:
+                reward -= 15
+
+        # Penalty for being stuck
+        if self.stuck_counter > 30:
+            reward -= 20
+        if self.stuck_counter > 60:
+            reward -= 29
+
+        # Major penalty for losing life
+        if current_lives < self.last_lives:
+            reward -= 50  # Very heavy penalty
+
+        # === CONSISTENT PROGRESS REWARDS ===
+        # Small consistent forward movement
+        if x_progress > 0 and x_progress <= 20:
+            reward += x_progress * 0.5  # 1-10 points for small progress
+
+        # Score increase reward (optional - can remove if you want)
+        score_gain = current_score - self.last_score
+        if score_gain > 0:
+            reward += min(20, score_gain * 0.1)
+
+        # === STUCK DETECTION ===
+        # Detect if agent is stuck (not making progress)
+        if abs(current_x - self.last_x) < 5:  # Minimal movement
+            self.stuck_counter += 1
         else:
-            self._stuck_steps += 1
+            self.stuck_counter = max(0, self.stuck_counter - 1)
 
-        # B. Jumping Penalty (Addressing "jumping a lot")
-        if self._action_map is not None:
-            # Get the boolean array of buttons pressed for this discrete action
-            button_array = self._action_map[action]
-            # If the action contains an 'A' or 'B' (Jump/Spin-Dash), apply a penalty
-            is_jump_action = any(button_array[idx] for idx in self.jump_button_indices)
+        # Small survival reward
+        reward += 1
 
-            if is_jump_action:
-                new_shaped_reward += self.JUMP_PENALTY
+        # Update trackers
+        self.last_x = current_x
+        self.last_action = action
+        self.last_lives = current_lives
+        self.last_score = current_score
 
-        # C. Step Penalty (Encourages faster solutions)
-        new_shaped_reward += self.STEP_PENALTY
+        return reward
 
-        # D. Game Over / Lives Lost Penalty
-        if current_lives < self._prev_lives:
-            # Apply a large penalty and terminate the episode immediately
-            terminated = True
-            new_shaped_reward += self.LIFE_LOSS_PENALTY
-        self._prev_lives = current_lives
+    def step(self, action):
+        """Step with high-impact reward shaping (no rings)"""
+        obs, env_reward, terminated, truncated, info = self.env.step(action)
 
-        # --- 3. Termination Check ---
+        # Calculate shaped reward
+        shaped_reward = self._calculate_reward_shaping(info, action)
 
-        # E. Stuck Penalty (Addressing "cannot pass the wall")
-        if self._stuck_steps >= self.STUCK_TIMEOUT:
-            # Apply a large penalty for failure to progress and terminate
-            terminated = True
-            new_shaped_reward += self.STUCK_TERMINATION_PENALTY
-            info['stuck_timeout'] = True
+        # Combine environment reward with shaped reward
+        total_reward = env_reward + shaped_reward
 
-        # F. Max Steps Timeout
-        if self._steps >= self._max_steps:
+        # Step counter for episode termination
+        self.current_steps += 1
+        if self.current_steps >= self.max_steps:
             truncated = True
-            info['max_steps_timeout'] = True
 
-        # Combine the original environment reward (e.g., rings, score) with the shaped reward
-        final_reward = reward + new_shaped_reward
+            # Major bonus for surviving full episode
+            survival_bonus = 30
+            total_reward += survival_bonus
 
-        return obs, final_reward, terminated, truncated, info
+            # Progress bonus based on how far they got
+            progress_bonus = (self.max_x_reached - self.zone_start_x) * 0.01
+            total_reward += min(50, progress_bonus)
+
+        # Debug info
+        if shaped_reward != 0:
+            print(f"Step {self.current_steps}: "
+                  f"X={self._get_screen_x(info)}, "
+                  f"Action={action}, "
+                  f"ShapedReward={shaped_reward:.1f}, "
+                  f"TotalReward={total_reward:.1f}")
+
+        return obs, total_reward, terminated, truncated, info
+
+class SonicRewardWrapper(gym.Wrapper):
+    """
+    Alternative high-impact reward wrapper (no rings)
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.last_x = 0
+        self.jump_history = []
+        self.max_x = 0
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self.last_x = self._get_x(info)
+        self.max_x = self.last_x
+        self.jump_history = []
+        return obs, info
+
+    def _get_x(self, info):
+        return info.get('screen_x', info.get('x', 0))
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+
+        current_x = self._get_x(info)
+
+        # High-impact progress rewards
+        if current_x > self.max_x:
+            progress = current_x - self.max_x
+            if progress > 50:
+                reward += 50  # Major progress
+            elif progress > 20:
+                reward += 20  # Good progress
+            else:
+                reward += progress * 0.5  # Small progress
+            self.max_x = current_x
+
+        # Jump management with high penalties
+        if action == 1:  # Jump action
+            self.jump_history.append(1)
+            if len(self.jump_history) > 8:
+                self.jump_history.pop(0)
+
+            # Heavy penalty for jump spam
+            if sum(self.jump_history) >= 6:  # 75% jumping
+                reward -= 29
+        else:
+            self.jump_history.append(0)
+            if len(self.jump_history) > 8:
+                self.jump_history.pop(0)
+
+        # Reward strategic actions
+        if action == 2:  # Spindash
+            reward += 15
+
+        self.last_x = current_x
+        return obs, reward, terminated, truncated, info
