@@ -18,8 +18,6 @@ class RepalyMemory:
         self.device = device
         self.memory_max_report = 0
 
-
-
     def insert(self, transition):
 
         # transition = [item.to("cpu") for item in transition]
@@ -48,14 +46,26 @@ class RepalyMemory:
             self.memory[self.position] = processed
         self.position = (self.position + 1) % self.capacity
 
-
     def sample(self, batch_size):
+        # assert self.can_sample(batch_size)
+
+        # batch = random.sample(self.memory, batch_size)
+        # batch = zip(*batch)
+
+        # return [torch.cat(items).to(self.device) for items in batch]
         assert self.can_sample(batch_size)
 
         batch = random.sample(self.memory, batch_size)
-        batch = zip(*batch)
+        batch = list(zip(*batch))  # transpose batch
 
-        return [torch.cat(items).to(self.device) for items in batch]
+        processed = []
+        for items in batch:
+            # Convert to tensor if not already
+            items = [torch.as_tensor(i, dtype=torch.float32).unsqueeze(0) if i.ndim == 0 else torch.as_tensor(i, dtype=torch.float32) for i in items]
+            items = torch.cat(items).to(self.device)
+            processed.append(items)
+
+        return processed
 
     def can_sample(self, batch_size):
         return len(self.memory) >= batch_size * 10
@@ -76,6 +86,7 @@ class Agent:
         # self.epsilon_decay = 1 - (((epsilon - min_epsilon) / nb_warmup) * 2)
         self.epsilon_decay = (self.epsilon - self.min_epsilon) / nb_warmup
         self.batch_size = batch_size
+        self.device = device #added this to test
         self.model.to(device)
         self.target_model.to(device)
         self.gamma = 0.99
@@ -139,7 +150,8 @@ class Agent:
             stats["Returns"].append(ep_return)
 
             if self.epsilon > self.min_epsilon:
-                self.epsilon = self.epsilon * self.epsilon_decay
+                # self.epsilon = self.epsilon * self.epsilon_decay
+                self.epsilon = max(self.min_epsilon, self.epsilon - self.epsilon_decay)
 
             if epoch % 10 == 0 :
                 self.model.save_model()
@@ -177,4 +189,5 @@ class Agent:
             for _ in range(1000):
                 time.sleep(0.01)
                 action = self.get_action(state)
-                state, reward, done, info = env.step(action)
+                next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
