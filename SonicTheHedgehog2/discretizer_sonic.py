@@ -34,9 +34,22 @@ class SonicDiscretizer(Discretizer):
     """
     def __init__(self, env):
         combos = [
-            ['RIGHT'],
-            ['RIGHT', 'B'],
-            ['DOWN', 'B'],
-            ['DOWN'],
+            # Core movement
+            ['RIGHT'],              # 0: Basic run
+            ['RIGHT', 'B'],         # 1: Run + jump
+            ['DOWN', 'B'],          # 2: Spindash charge
+            ['DOWN'],               # 3: Crouch/charge hold
+
+            # Strategic wall actions
+            ['RIGHT', 'DOWN'],      # 4: Crouch while moving right (wall transitions)
+            ['RIGHT', 'DOWN', 'B'], # 5: Spindash while holding right
+
+            # Essential alternatives
+            ['B'],                  # 6: Jump in place (for precise platforming)
+            ['LEFT'],               # 7: Move left (for adjustments)
+
+            # Advanced techniques
+            ['RIGHT', 'A'],         # 8: Run + super peel-out (if available)
+            ['DOWN', 'A'],          # 9: Alternative charge
         ]
         super().__init__(env, combos)
