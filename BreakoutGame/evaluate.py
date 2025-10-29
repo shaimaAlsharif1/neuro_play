@@ -18,7 +18,7 @@ model = AtariNet(nb_actions=4)
 
 model.to(device)
 
-model.load_model()
+model.load_model("BreakoutGame/models/latest_breakout_model.pt")
 
 agent = Agent(model= model,
               device= device,
@@ -30,8 +30,7 @@ agent = Agent(model= model,
               batch_size=64)
 
 
-agent.evaluate(env=environment#, epochs=200000
-               )
+agent.train(env=environment, epochs=200000)
 
 # state = environment.reset()
 
