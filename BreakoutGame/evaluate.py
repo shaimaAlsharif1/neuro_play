@@ -31,7 +31,7 @@ agent = Agent(model= model,
 
 
 agent.evaluate(env=environment#, epochs=200000
-               )
+)
 
 # state = environment.reset()
 
